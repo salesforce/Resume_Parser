@@ -1,0 +1,36 @@
+{
+  "packageDirectories": [
+    {
+      "path": "agent",
+      "default": true
+    },
+    {
+      "versionName": "v3.3.0 — CMDT-generated prompt schema for supported wire keys",
+      "versionNumber": "3.3.0.NEXT",
+      "path": "force-app",
+      "default": false,
+      "package": "Resume Parser",
+      "versionDescription": "Résumé Parser full app: data model, Apex, wizard LWC + custom Lightning type, GenAI prompt template, flows, GenAiFunction, a single Resume_Parser_User permission set, layouts. v3.2.1 makes the agent publishable on current Agentforce: the resolved Contact Id is passed inside the wizard's Details JSON (the dedicated action-input approach could not publish — the genAiFunction only surfaces Details), and the now-unused contactId plumbing is removed from the flow/ResumeWizardData. Keeps the v3.2.0 read-only 'How fields map' disclosure and the v3.1.0 data-driven Resume_Field_Map__mdt field map. v3.3.0 generates the prompt schema for supported typed candidate/role wire keys from active Resume_Field_Map__mdt rows and injects it via ExtraInstructions; existing keys can be retargeted or tuned in CMDT, while brand-new keys still require Apex DTO and LWC support. It also removes temporary Draft/files after parse failure or Re-upload and activates the exact agent version published without editing generated planner metadata. NOTE: 04tHu000004hhiJIAQ (3.2.1-1) remains the last BUILT/Released package; this 3.3.0 source is not yet packaged.",
+      "definitionFile": "config/project-scratch-def.json",
+      "packageMetadataAccess": {
+        "permissionSets": [
+          "EinsteinGPTPromptTemplateManager"
+        ]
+      }
+    }
+  ],
+  "name": "Resume Parser",
+  "namespace": "",
+  "sfdcLoginUrl": "https://login.salesforce.com",
+  "sourceApiVersion": "66.0",
+  "packageAliases": {
+    "Resume Parser": "0HoHu000000Y2jQKAS",
+    "Resume Parser@1.0.0-1": "04tHu000004hhWaIAI",
+    "Resume Parser@2.0.0-1": "04tHu000004hhWfIAI",
+    "Resume Parser@3.0.0-1": "04tHu000004hhWkIAI",
+    "Resume Parser@3.0.1-1": "04tHu000004hhWpIAI",
+    "Resume Parser@3.1.0-1": "04tHu000004hhi4IAA",
+    "Resume Parser@3.2.0-1": "04tHu000004hhiEIAQ",
+    "Resume Parser@3.2.1-1": "04tHu000004hhiJIAQ"
+  }
+}

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GenAiPromptTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
+    <activeVersionIdentifier>zU0ZnIjRHVBItSg8zIKqjekLSYllkuKsTO5ZqqkxAqY=_1</activeVersionIdentifier>
+    <description>Extracts candidate info and work history from an uploaded resume file as strict JSON. The prompt schema for supported typed wire keys is built from active Resume_Field_Map__mdt rows and injected via ExtraInstructions.</description>
+    <developerName>Extract_Work_Experience</developerName>
+    <masterLabel>Extract Work Experience</masterLabel>
+    <overridable>false</overridable>
+    <templateVersions>
+        <content>You are an expert resume parser. You are given the contents of a single uploaded resume file. Read the resume and extract the candidate&apos;s contact information and their complete work history.
+
+### RESUME FILE
+Analyze the following resume:
+
+&lt;RESUME&gt;
+{!$RecordSnapshot:ResumeFile.Snapshot}
+&lt;/RESUME&gt;
+
+Return your answer as a single, strictly valid JSON object and NOTHING else — no prose, no markdown, no code fences. The JSON object must contain EXACTLY the following keys, and no others. Each value is a string, except &quot;workExperiences&quot;, which is an array of role objects. The description after the colon tells you what to extract and how to format it:
+
+{
+{!$Input:ExtraInstructions}
+}
+
+Rules:
+- Return every key listed above, even if the value is an empty string.
+- &quot;workExperiences&quot; is an array: return one object per role found, each containing exactly the keys listed inside it. Return an empty array [] if the resume has no recognizable work history.
+- List work experiences in reverse-chronological order (most recent first).
+- Do NOT add any keys that are not listed above.
+- Follow the formatting note in each key&apos;s description (plain numbers with no symbols or commas; dates as YYYY-MM-DD; booleans as true/false).
+- If a field is not present in the resume, use an empty string (or false for a boolean). NEVER invent data.
+
+Return ONLY valid JSON strictly matching the keys above. Do not wrap the JSON in markdown code blocks (no ```json). Start with { and end with }. The JSON must be valid and parseable.</content>
+        <inputs>
+            <apiName>ResumeFile</apiName>
+            <definition>SOBJECT://ContentDocument</definition>
+            <masterLabel>Resume File</masterLabel>
+            <referenceName>Input:ResumeFile</referenceName>
+            <required>true</required>
+        </inputs>
+        <inputs>
+            <apiName>ExtraInstructions</apiName>
+            <definition>primitive://String</definition>
+            <masterLabel>Extra Instructions</masterLabel>
+            <referenceName>Input:ExtraInstructions</referenceName>
+            <required>false</required>
+        </inputs>
+        <isCitationEnabled>false</isCitationEnabled>
+        <primaryModel>sfdc_ai__DefaultGPT5Mini</primaryModel>
+        <status>Published</status>
+        <templateDataProviders>
+            <definition>invocable://getDataForGrounding</definition>
+            <parameters>
+                <definition>primitive://String</definition>
+                <isRequired>true</isRequired>
+                <parameterName>recordId</parameterName>
+                <valueExpression>{!$Input:ResumeFile.Id}</valueExpression>
+            </parameters>
+            <referenceName>RecordSnapshot:ResumeFile</referenceName>
+        </templateDataProviders>
+        <templateFormat>FormulaExpression</templateFormat>
+        <versionIdentifier>zU0ZnIjRHVBItSg8zIKqjekLSYllkuKsTO5ZqqkxAqY=_1</versionIdentifier>
+    </templateVersions>
+    <type>einstein_gpt__flex</type>
+    <visibility>Global</visibility>
+</GenAiPromptTemplate>

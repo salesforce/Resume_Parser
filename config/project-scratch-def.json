@@ -1,0 +1,16 @@
+{
+  "orgName": "Resume Parser Development",
+  "edition": "Developer",
+  "features": ["EnableSetPasswordInApi", "Einstein1AIPlatform"],
+  "settings": {
+    "lightningExperienceSettings": {
+      "enableS1DesktopEnabled": true
+    },
+    "einsteinGptSettings": {
+      "enableEinsteinGptPlatform": true
+    },
+    "mobileSettings": {
+      "enableS1EncryptedStoragePref2": false
+    }
+  }
+}

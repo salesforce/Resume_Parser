@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Resume Parser User</label>
+    <description>Full access to the Résumé Parser solution: data model objects/fields/tabs plus Apex and flow access for the in-chat wizard. One assignment covers the package. Agent access is granted separately after the agent is deployed — see the repo README.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+
+    <!-- Apex classes -->
+    <classAccesses>
+        <apexClass>ResumeParsing</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>ResumeWizardController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>ResumeWizardData</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+
+    <!-- Flows -->
+    <flowAccesses>
+        <enabled>true</enabled>
+        <flow>resumeWizard_Output</flow>
+    </flowAccesses>
+
+    <!-- Objects -->
+    <objectPermissions>
+        <object>Resume_Data__c</object>
+        <allowCreate>true</allowCreate>
+        <allowRead>true</allowRead>
+        <allowEdit>true</allowEdit>
+        <allowDelete>true</allowDelete>
+        <viewAllRecords>true</viewAllRecords>
+        <modifyAllRecords>true</modifyAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <object>Work_Experience__c</object>
+        <allowCreate>true</allowCreate>
+        <allowRead>true</allowRead>
+        <allowEdit>true</allowEdit>
+        <allowDelete>true</allowDelete>
+        <viewAllRecords>true</viewAllRecords>
+        <modifyAllRecords>true</modifyAllRecords>
+    </objectPermissions>
+
+    <!-- Fields: Resume_Data__c -->
+    <fieldPermissions>
+        <field>Resume_Data__c.Candidate_Name__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Candidate_Email__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Candidate_Phone__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Summary__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Source_ContentDocumentId__c</field>
+        <editable>false</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Processing_Status__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Resume_Data__c.Last_Processed__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- Fields: Work_Experience__c -->
+    <fieldPermissions>
+        <field>Work_Experience__c.Company_Name__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Job_Title__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Start_Date__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.End_Date__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Is_Current__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Location__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Employment_Type__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.Description__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Work_Experience__c.External_Key__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- Tabs -->
+    <tabSettings>
+        <tab>Resume_Data__c</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+    <tabSettings>
+        <tab>Work_Experience__c</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+</PermissionSet>

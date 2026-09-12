@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Target_Object__c</fullName>
+    <label>Target Object</label>
+    <type>Text</type>
+    <description>Which object this value commits to, and therefore how it is read from the parsed JSON. Resume_Data__c = a single candidate-level field read from a top-level JSON key and written to the parent résumé. Work_Experience__c = a repeating role field read from each element of the workExperiences[] array and written to each child row. This parent/child routing is the one dimension a flat single-object field map does not need.</description>
+    <length>80</length>
+    <required>false</required>
+    <unique>false</unique>
+</CustomField>

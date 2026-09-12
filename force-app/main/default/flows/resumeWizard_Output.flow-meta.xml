@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>66.0</apiVersion>
+    <assignments>
+        <name>Assign_Details_To_Options</name>
+        <label>Assign Details To Options</label>
+        <locationX>0</locationX>
+        <locationY>0</locationY>
+        <assignmentItems>
+            <assignToReference>Options.resumeWizardJSON</assignToReference>
+            <operator>Assign</operator>
+            <value>
+                <elementReference>Details</elementReference>
+            </value>
+        </assignmentItems>
+    </assignments>
+    <description>Maps the Details config string into the résumé wizard custom Lightning type so the agent can render it.</description>
+    <environments>Default</environments>
+    <interviewLabel>Résumé Wizard {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>Résumé Wizard</label>
+    <processMetadataValues>
+        <name>BuilderType</name>
+        <value>
+            <stringValue>LightningFlowBuilder</stringValue>
+        </value>
+    </processMetadataValues>
+    <processMetadataValues>
+        <name>CanvasMode</name>
+        <value>
+            <stringValue>AUTO_LAYOUT_CANVAS</stringValue>
+        </value>
+    </processMetadataValues>
+    <processMetadataValues>
+        <name>OriginBuilderType</name>
+        <value>
+            <stringValue>LightningFlowBuilder</stringValue>
+        </value>
+    </processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>0</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Assign_Details_To_Options</targetReference>
+        </connector>
+    </start>
+    <status>Active</status>
+    <variables>
+        <description>A JSON string of wizard config (title, subtitle, and Contact Id for picker prefill).</description>
+        <name>Details</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>true</isInput>
+        <isOutput>false</isOutput>
+    </variables>
+    <variables>
+        <description>Show to the user</description>
+        <name>Options</name>
+        <apexClass>ResumeWizardData</apexClass>
+        <dataType>Apex</dataType>
+        <isCollection>false</isCollection>
+        <isInput>false</isInput>
+        <isOutput>true</isOutput>
+    </variables>
+</Flow>

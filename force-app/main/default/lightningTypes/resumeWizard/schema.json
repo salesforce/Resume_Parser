@@ -1,0 +1,5 @@
+{
+  "title" : "Résumé Parser Wizard",
+  "description" : "An in-chat wizard to upload a résumé, review and edit the parsed work history, and confirm to save.",
+  "lightning:type" : "@apexClassType/c__ResumeWizardData"
+}

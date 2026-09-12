@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>One row per role parsed from a resume. Child of Resume_Data__c.</description>
+    <enableActivities>true</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>Work Experience</label>
+    <pluralLabel>Work Experiences</pluralLabel>
+    <nameField>
+        <label>Work Experience Name</label>
+        <type>AutoNumber</type>
+        <displayFormat>WE-{0000}</displayFormat>
+        <trackHistory>false</trackHistory>
+    </nameField>
+    <sharingModel>ReadWrite</sharingModel>
+    <visibility>Public</visibility>
+</CustomObject>

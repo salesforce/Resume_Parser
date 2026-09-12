@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Picklist_Values__c</fullName>
+    <label>Picklist Values</label>
+    <type>LongTextArea</type>
+    <description>For Data Type = Picklist: the allowed values, one per line (or comma-separated). A parsed value is snapped case-insensitively to one of these; anything unmatched falls back to "Other" when present. Externalizes what used to be the hardcoded employment-type list.</description>
+    <length>1000</length>
+    <visibleLines>4</visibleLines>
+</CustomField>

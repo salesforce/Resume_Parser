@@ -1,0 +1,207 @@
+system:
+    instructions: "You are the Resume Parser, an employee assistant. When a user wants to add or process a candidate resume, you first identify which Contact the resume is for, then you open an interactive résumé wizard right in the chat. The wizard handles uploading the file, parsing the work history, letting the user review and edit it, and saving the records. Be concise and friendly."
+    messages:
+        welcome: "Hi! I can turn a résumé into structured work-experience records. Tell me which contact it's for — for example, 'add a resume for Jane Doe'."
+        error: "Sorry, something went wrong while opening the résumé wizard."
+
+config:
+    developer_name: "Resume_Parser_Agent"
+    agent_label: "Resume Parser Agent"
+    agent_type: "AgentforceEmployeeAgent"
+    agent_template: "EmployeeCopilot__AgentforceEmployeeAgent"
+    description: "Identifies the Contact, then opens an interactive résumé wizard that uploads, parses, lets the user review/edit, and saves Work Experience records."
+
+variables:
+    contactId: mutable string = ""
+        description: "18-char Contact Id resolved from IdentifyRecordByName; gates the wizard."
+    contactName: mutable string = ""
+        description: "Resolved Contact name, used in the wizard subtitle."
+    contactDetails: mutable string = ""
+        description: "Text snapshot of the Contact's fields/related data (email, phone, account) from GetRecordDetails, shown when confirming."
+    contactConfirmed: mutable boolean = False
+        description: "True only after the user acknowledges the resolved Contact on a later turn. Forces a turn boundary so the wizard opens alone (and therefore renders)."
+
+language:
+    default_locale: "en_US"
+    additional_locales: ""
+    all_additional_locales: False
+
+start_agent agent_router:
+    label: "Agent Router"
+    description: "Welcome the user, route résumé requests, and open the wizard once the contact is confirmed."
+
+    # If the contact is already confirmed (e.g. the user sends another message after the wizard
+    # opened), go straight to the wizard — deterministic, no LLM routing pass.
+    before_reasoning:
+        if @variables.contactConfirmed == True:
+            transition to @subagent.Resume_Wizard
+
+    reasoning:
+        instructions: ->
+            # POST-ACTION CHECK (top of block): the instant confirm_and_open flips the flag, this
+            # re-resolves and transitions BEFORE the LLM is re-invoked — so the router emits NO text
+            # on the confirm turn (same silent handoff as a first-turn route). The wizard subagent
+            # owns the only user-facing message. This is the deterministic fix for the LLM ignoring
+            # "say exactly X" wording instructions.
+            if @variables.contactConfirmed == True:
+                transition to @subagent.Resume_Wizard
+
+            if @variables.contactId != "" and @variables.contactConfirmed == False:
+                | You already found the Contact {!@variables.contactName} and asked the user whether
+                  they are ready to open the résumé wizard. Interpret their latest message:
+                  - If they confirm (yes / proceed / that's the one / open it), call confirm_and_open
+                    and do not reply with any text.
+                  - If they want a DIFFERENT person (no / not them / actually it's <other name> /
+                    I'm looking for <other name>), call change_contact to clear the current contact.
+                    Do not reply with text; you will route them to a new search next.
+
+            if @variables.contactId == "":
+                | If the user wants to upload, add, submit, parse, or process a résumé, or names a
+                  contact a résumé is for, call go_to_Identify_Contact. Otherwise greet briefly and
+                  ask which contact the résumé is for.
+        actions:
+            go_to_Identify_Contact: @utils.transition to @subagent.Identify_Contact
+            confirm_and_open: @utils.setVariables
+                description: "Record that the user confirmed the resolved Contact; the wizard opens next."
+                with contactConfirmed = True
+                available when @variables.contactId != "" and @variables.contactConfirmed == False
+            change_contact: @utils.setVariables
+                description: "The user wants a DIFFERENT contact than the one found. Clear the resolved contact so a fresh search can run."
+                with contactId = ""
+                with contactName = ""
+                with contactDetails = ""
+                available when @variables.contactId != "" and @variables.contactConfirmed == False
+
+subagent Identify_Contact:
+    label: "Identify Contact"
+    description: "Determines which Contact the résumé is for (including switching to a different contact), then hands off to the wizard."
+
+    reasoning:
+        instructions: ->
+            if @variables.contactId == "":
+                | Identify the Contact for this résumé.
+                  If the user has not named a contact yet, ask: "Which contact is this résumé for?"
+                  When the user gives a name, call {!@actions.IdentifyRecordByName} with
+                  recordName = that name and objectApiName = "Contact". Never run an unscoped
+                  cross-object search: only a Contact Id is valid for this workflow.
+                  searchResults contains matching Contact records; the top Contact match is captured.
+                  If multiple Contacts match, list them by name and ask which one. If none match, say
+                  so and ask the user to re-check the spelling.
+
+            if @variables.contactId != "" and @variables.contactConfirmed == False:
+                | You found the Contact {!@variables.contactName}. First call {!@actions.GetRecordDetails}
+                  with recordId = "{!@variables.contactId}" to load their details, then ask one question to
+                  confirm, including the email, phone, and account name if present in the details:
+                  "I found {!@variables.contactName} — account: <account>, email: <email>, phone: <phone>.
+                  Ready to open the résumé wizard?" Read the email, phone, and account values from the record
+                  details snapshot; omit any field that is missing rather than showing an empty value.
+                  Then STOP and wait for the user's answer — do NOT open the wizard. Their confirmation is
+                  handled on the next turn.
+        actions:
+            IdentifyRecordByName: @actions.IdentifyRecordByName
+                with recordName = ...
+                with objectApiName = "Contact"
+                set @variables.contactId = @outputs.searchResults[0].data.Id
+                set @variables.contactName = @outputs.searchResults[0].data.Name
+                available when @variables.contactId == ""
+            GetRecordDetails: @actions.GetRecordDetails
+                with recordId = @variables.contactId
+                set @variables.contactDetails = @outputs.snapshot
+                available when @variables.contactId != "" and @variables.contactConfirmed == False
+
+# ── Step 2: render the wizard. ONLY action in this subagent → renders reliably (the v6 condition). ──
+
+
+    actions:
+        IdentifyRecordByName:
+            label: "Identify Record by Name"
+            description: "Resolves the name the user gave into matching records (returns record Ids). Used to find the Contact."
+            source: "EmployeeCopilot__IdentifyRecordByName"
+            target: "standardInvocableAction://identifyRecordByName"
+            inputs:
+                recordName: string
+                    label: "recordName"
+                    is_required: True
+                    is_user_input: True
+                    complex_data_type_name: "lightning__textType"
+                    description: |The contact name the user provided.
+                objectApiName: string
+                    label: "objectApiName"
+                    is_required: False
+                    complex_data_type_name: "lightning__textType"
+                    description: |Always set to Contact so the result cannot resolve to another object type.
+            outputs:
+                searchResults: list[object]
+                    label: "searchResults"
+                    complex_data_type_name: "lightning__recordInfoType"
+                    is_displayable: False
+                    filter_from_agent: False
+                    description: |Matching records in descending order of relevance, each with id, Name, and sObjectInfo.apiName.
+            include_in_progress_indicator: True
+            progress_indicator_message: "Looking up the contact..."
+        GetRecordDetails:
+            label: "Get Record Details"
+            description: "Returns a text snapshot of a record's fields and related data (e.g. a Contact's email, phone, and account) so the agent can show a richer confirmation."
+            source: "EmployeeCopilot__GetRecordDetails"
+            target: "standardInvocableAction://getDataForGrounding"
+            inputs:
+                recordId: object
+                    label: "recordId"
+                    is_required: True
+                    complex_data_type_name: "lightning__recordIdType"
+                    description: |The Id of the Contact to get details for.
+            outputs:
+                snapshot: string
+                    label: "snapshot"
+                    is_displayable: False
+                    filter_from_agent: False
+                    description: |Text blob of the record's fields/values and related-list data.
+            include_in_progress_indicator: True
+            progress_indicator_message: "Loading contact details..."
+
+subagent Resume_Wizard:
+    label: "Resume Wizard"
+    description: "Opens the interactive résumé wizard, pre-filled with the identified Contact."
+
+    reasoning:
+        instructions: ->
+            | Call {!@actions.Open_Resume_Wizard} exactly once. Build its Details input as a JSON string
+              of exactly this shape, using the contactId value "{!@variables.contactId}" verbatim and
+              naming {!@variables.contactName} in the subtitle:
+              {"title":"Résumé Parser","subtitle":"Upload a résumé for {!@variables.contactName}, review the parsed work history, then save.","contactId":"{!@variables.contactId}"}
+              You MUST present the Options output to the user as-is — it is the interactive wizard.
+              Do NOT rewrite, restate, describe, or summarize it as text or bullets. When you call
+              Open_Resume_Wizard, your ENTIRE accompanying text reply must be exactly:
+              "The résumé wizard is ready." — nothing more. Do NOT mention uploading or parsing, do NOT
+              ask a question, and do NOT refer to the wizard's position on screen; the wizard's own title
+              and subtitle already explain the steps.
+              On a LATER turn, if the user wants a DIFFERENT contact or another résumé, do not re-search
+              or reopen the wizard yourself — tell them they can change the contact with the contact search
+              box in the wizard and use the "Re-upload" / "Parse another résumé" options to start over.
+              Do not refer to the wizard's position on screen (e.g. "above" or "below").
+              Do not call Open_Resume_Wizard more than once unless the user asks to see it again.
+        actions:
+            Open_Resume_Wizard: @actions.Open_Resume_Wizard
+                with Details = ...
+
+    actions:
+        Open_Resume_Wizard:
+            label: "Open Resume Wizard"
+            description: "Displays the in-conversation résumé wizard (upload, review/edit parsed work history, save), pre-filled with the chosen Contact."
+            source: "resumeWizard_Output"
+            target: "flow://resumeWizard_Output"
+            inputs:
+                Details: string
+                    label: "Details"
+                    is_required: True
+                    complex_data_type_name: "lightning__textType"
+                    description: |The JSON configuration string for the résumé wizard (title, subtitle, contactId).
+            outputs:
+                Options: object
+                    label: "Options"
+                    complex_data_type_name: "c__resumeWizard"
+                    is_displayable: True
+                    filter_from_agent: False
+                    description: |The rendered résumé wizard shown to the user.
+            include_in_progress_indicator: True
+            progress_indicator_message: "Opening the résumé wizard..."

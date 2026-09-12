@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Target_Field_API_Name__c</fullName>
+    <label>Target Field API Name</label>
+    <type>Text</type>
+    <description>API name of the field on the Target Object that this value is written to on commit (e.g. Company_Name__c, Candidate_Email__c). Blank = extracted/shown but never written.</description>
+    <length>80</length>
+    <required>false</required>
+    <unique>false</unique>
+</CustomField>

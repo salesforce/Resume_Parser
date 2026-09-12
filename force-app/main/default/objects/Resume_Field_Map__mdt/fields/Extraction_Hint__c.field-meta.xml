@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Extraction_Hint__c</fullName>
+    <label>Extraction Hint</label>
+    <type>LongTextArea</type>
+    <description>Synonyms/instructions telling the AI what to look for. Surfaced by buildExtraInstructions() as additional guidance for the prompt.</description>
+    <length>1000</length>
+    <visibleLines>3</visibleLines>
+</CustomField>

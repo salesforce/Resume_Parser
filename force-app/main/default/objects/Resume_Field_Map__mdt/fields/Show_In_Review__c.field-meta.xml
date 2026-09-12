@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Show_In_Review__c</fullName>
+    <label>Show In Review</label>
+    <type>Checkbox</type>
+    <description>Whether the field is surfaced in the wizard's review form for the user to see/edit.</description>
+    <defaultValue>true</defaultValue>
+</CustomField>

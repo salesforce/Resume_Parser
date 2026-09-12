@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Read_Only__c</fullName>
+    <label>Read Only</label>
+    <type>Checkbox</type>
+    <description>When shown, display the value as read-only reference rather than an editable input. Read-only rows are never written on commit.</description>
+    <defaultValue>false</defaultValue>
+</CustomField>

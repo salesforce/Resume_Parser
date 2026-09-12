@@ -1,0 +1,14 @@
+{
+  "required" : [ "Details" ],
+  "unevaluatedProperties" : false,
+  "properties" : {
+    "Details" : {
+      "title" : "Details",
+      "description" : "A JSON string for the résumé wizard, formatted like: {\"title\":\"Résumé Parser\",\"subtitle\":\"Upload a résumé, review the parsed work history, then save.\",\"contactId\":\"003...\"}\n\nRules: 'title' is the heading, 'subtitle' is helper text, and 'contactId' is the resolved Contact Id used to prefill the editable Contact picker. The wizard handles upload, parse, review/edit, and save on its own.",
+      "lightning:type" : "lightning__textType",
+      "lightning:isPII" : false,
+      "copilotAction:isUserInput" : false
+    }
+  },
+  "lightning:type" : "lightning__objectType"
+}
