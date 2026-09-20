@@ -88,6 +88,7 @@ The experience is a conversational front-half (resolve and confirm the Contact) 
 - **Step 2 — Review & edit.** The wizard shows candidate fields plus a table of every role, with left/right paging to step through each one as an editable card. The user corrects anything the model got wrong.
 - **Step 3 — Commit.** On confirm, Apex writes the reviewed roles as `Work_Experience__c` children and stamps the résumé **Success**. Recommitting the same Draft replaces its child set rather than appending duplicates.
 
+<!-- Mermaid sequence-message semicolons must be entity-encoded because raw semicolons are statement separators. -->
 ```mermaid
 sequenceDiagram
     autonumber
@@ -102,7 +103,7 @@ sequenceDiagram
     A->>D: Create Resume_Data__c (Draft) + attach file
     A->>P: Invoke Extract_Work_Experience (vision)
     P-->>A: Candidate + roles as JSON
-    A-->>W: Editable fields (Draft parent + file persisted; no role children)
+    A-->>W: Editable fields (Draft parent + file persisted#59; no role children)
     U->>W: Review, edit, confirm
     W->>A: commitDrafts(resumeId, editedRows)
     A->>D: Replace Work_Experience__c set, stamp Success
