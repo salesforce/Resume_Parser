@@ -168,8 +168,11 @@
   gap: var(--slds-g-spacing-3, 0.75rem);
 }
 
-/* Roles table */
+/* Roles table — lightning-datatable provides the only horizontal scroll surface. */
 .roles-table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   border: var(--slds-g-sizing-border-1, 1px) solid var(--slds-g-color-border-1, #c9c9c9);
   border-radius: var(--slds-g-radius-border-2, 0.25rem);
 }
@@ -255,17 +258,35 @@
   font-size: var(--slds-g-font-size-1, 0.75rem);
   color: var(--slds-g-color-on-surface-2, #444444);
 }
+.fieldmap-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--slds-g-radius-border-2, 0.25rem);
+}
+.fieldmap-table-scroll:focus-visible {
+  outline: 2px solid var(--brand-teal, #007890);
+  outline-offset: 2px;
+}
 .fieldmap-table {
   width: 100%;
+  min-width: 32rem;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: var(--slds-g-font-size-1, 0.75rem);
   border: var(--slds-g-sizing-border-1, 1px) solid var(--slds-g-color-border-1, #c9c9c9);
-  border-radius: var(--slds-g-radius-border-2, 0.25rem);
-  overflow: hidden;
 }
+.fieldmap-col-key { width: 21%; }
+.fieldmap-col-target { width: 31%; }
+.fieldmap-col-type { width: 13%; }
+.fieldmap-col-access { width: 35%; }
 .fieldmap-table th,
 .fieldmap-table td {
+  min-width: 0;
   text-align: left;
+  vertical-align: top;
   padding: var(--slds-g-spacing-1, 0.25rem) var(--slds-g-spacing-2, 0.5rem);
   border-bottom: var(--slds-g-sizing-border-1, 1px) solid var(--slds-g-color-border-1, #e5e5e5);
 }
@@ -275,8 +296,30 @@
   font-weight: var(--slds-g-font-weight-7, 700);
 }
 .fieldmap-table tr:last-child td { border-bottom: none; }
-.fieldmap-table code { font-size: var(--slds-g-font-size-1, 0.75rem); }
+.fieldmap-key,
+.fieldmap-target,
+.fieldmap-status {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.fieldmap-status {
+  display: block;
+  max-width: 100%;
+  hyphens: auto;
+}
+.fieldmap-table code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: var(--slds-g-font-size-1, 0.75rem);
+}
 
 @media (max-width: 480px) {
   .grid-2 { grid-template-columns: 1fr; }
+  .fieldmap-table { min-width: 30rem; }
+}
+
+@media print {
+  .fieldmap-table-scroll { overflow: visible; }
+  .fieldmap-table { min-width: 100%; }
 }

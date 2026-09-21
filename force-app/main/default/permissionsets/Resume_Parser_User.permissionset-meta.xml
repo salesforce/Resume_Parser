@@ -61,6 +61,11 @@
         <readable>true</readable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Resume_Data__c.Candidate_Website__c</field>
+        <editable>true</editable>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Resume_Data__c.Summary__c</field>
         <editable>true</editable>
         <readable>true</readable>

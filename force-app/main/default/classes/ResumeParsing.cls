@@ -6,91 +6,81 @@
  */
 
 /**
- * @description Shared resume-parsing utilities for the in-chat résumé wizard.
+ * @description CMDT-driven résumé parsing, review envelopes, coercion, and persistence.
  *
- * Owns: LLM-JSON cleanup, the CMDT-driven field map (Resume_Field_Map__mdt), value
- * coercion (date/checkbox/picklist/number/text), JSON -> editable drafts (preview),
- * drafts -> Work_Experience__c child rows, candidate fields -> Resume_Data__c parent,
- * and the concurrency-safe "replace the child set under a parent lock" commit.
+ * Active Resume_Field_Map__mdt rows are the runtime allowlist. A row can target only
+ * Resume_Data__c (candidate scope) or Work_Experience__c (repeating role scope), must name a
+ * real direct field, and must use a supported/compatible data type. Invalid rows remain visible
+ * in the disclosure with an issue but are excluded from prompt, review, and DML.
  *
- * The map is DATA (Resume_Field_Map__mdt), so an admin can retarget or tune the existing typed
- * candidate/role wire keys without changing the prompt template. A brand-new wire key still needs
- * a matching Apex DTO member and LWC review control. Target_Object__c routes a mapping to the parent
- * (Resume_Data__c) or the repeating work-experience child rows (Work_Experience__c).
- *
- * Nothing here calls the LLM or queries for the file — pure transformation + DML.
+ * Writes remain system-mode as in the original implementation; this refactor does not silently
+ * introduce a per-field FLS contract. The strict boundary is metadata routing + object/type checks.
  */
 public with sharing class ResumeParsing {
 
     public static final Integer MAX_ROWS = 50;
-
-    // Fallback picklist values, used only when a Picklist mapping has no Picklist_Values__c set.
-    public static final List<String> EMPLOYMENT_TYPES = new List<String>{
-        'Full-time', 'Part-time', 'Contract', 'Internship', 'Temporary', 'Freelance', 'Other'
+    private static final String CANDIDATE_SCOPE = 'Resume_Data__c';
+    private static final String ROLE_SCOPE = 'Work_Experience__c';
+    private static final Set<String> SUPPORTED_TYPES = new Set<String>{
+        'Text', 'Email', 'Phone', 'URL', 'Date', 'Checkbox', 'Number', 'Picklist'
     };
 
-    // Test seam: let tests inject mappings instead of relying on deployed CMDT rows.
     @TestVisible private static List<Resume_Field_Map__mdt> overrideMappings = null;
 
-    /**
-     * @description The editable shape for one role. Returned to the LWC for preview/edit,
-     * and accepted back from the LWC on commit. @AuraEnabled so it crosses to the wire.
-     * The member names ARE the CMDT Parse Keys (the single wire contract), which is why
-     * a draft can be round-tripped through a Parse-Key-keyed Map (see toDrafts/commitDrafts).
-     */
+    /** One generic editable value plus the trusted display metadata projected from CMDT. */
+    public class FieldDraft {
+        @AuraEnabled public String parseKey;
+        @AuraEnabled public String label;
+        @AuraEnabled public String targetObject;
+        @AuraEnabled public String targetField;
+        @AuraEnabled public String dataType;
+        @AuraEnabled public String value;       // canonical wire string; checkbox uses "true"/"false"
+        @AuraEnabled public Boolean showInReview;
+        @AuraEnabled public Boolean readOnly;
+        @AuraEnabled public Decimal sortOrder;
+        @AuraEnabled public String inputKind;   // input | textarea | checkbox | picklist
+        @AuraEnabled public String inputType;   // lightning-input type where inputKind=input
+        @AuraEnabled public List<String> options = new List<String>();
+    }
+
+    /** One repeating role. Stable rowId is UI identity only; fields are generic envelopes. */
     public class WorkExperienceDraft {
-        @AuraEnabled public String rowId;            // client-side key for the LWC (not persisted)
-        @AuraEnabled public String company;
-        @AuraEnabled public String title;
-        @AuraEnabled public String startDate;        // ISO-ish string; coerced to Date on commit
-        @AuraEnabled public String endDate;
-        @AuraEnabled public Boolean isCurrent;
-        @AuraEnabled public String location;
-        @AuraEnabled public String employmentType;
-        @AuraEnabled public String description;
+        @AuraEnabled public String rowId;
+        @AuraEnabled public List<FieldDraft> fields = new List<FieldDraft>();
     }
 
-    /** The editable candidate-level (résumé) fields, sent back from the wizard on commit. */
-    public class CandidateDraft {
-        @AuraEnabled public String candidateName;
-        @AuraEnabled public String candidateEmail;
-        @AuraEnabled public String candidatePhone;
-        @AuraEnabled public String summary;
-    }
-
-    /** Candidate-level + roles, returned by the wizard's uploadAndParse. */
+    /** Generic candidate fields plus generic repeating role rows. */
     public class ParseResult {
         @AuraEnabled public String resumeDataId;
-        @AuraEnabled public String candidateName;
-        @AuraEnabled public String candidateEmail;
-        @AuraEnabled public String candidatePhone;
-        @AuraEnabled public String summary;
+        @AuraEnabled public List<FieldDraft> candidateFields = new List<FieldDraft>();
         @AuraEnabled public List<WorkExperienceDraft> workExperiences = new List<WorkExperienceDraft>();
     }
 
-    /**
-     * @description A read-only projection of one Resume_Field_Map__mdt row for the wizard's
-     * "How fields map" disclosure — so a user can see, in-chat, where each parsed value lands
-     * without opening Setup. Built by fieldMapViews(); never used for parsing/commit.
-     */
+    /** Disclosure row, including invalid active mappings that are excluded from review and DML. */
     public class FieldMapView {
         @AuraEnabled public String parseKey;
         @AuraEnabled public String targetObject;
         @AuraEnabled public String targetField;
-        @AuraEnabled public String targetLabel;   // resolved field label (best-effort), else null
+        @AuraEnabled public String targetLabel;
         @AuraEnabled public String dataType;
+        @AuraEnabled public String defaultValue;
         @AuraEnabled public Boolean showInReview;
         @AuraEnabled public Boolean readOnly;
         @AuraEnabled public Decimal sortOrder;
+        @AuraEnabled public Boolean supported;
+        @AuraEnabled public String issue;
+        @AuraEnabled public String inputKind;
+        @AuraEnabled public String inputType;
+        @AuraEnabled public List<String> options = new List<String>();
     }
 
-    // ── Mapping access ──────────────────────────────────────────────────────
+    // ── Mapping access and validation ──────────────────────────────────────
 
     private static List<Resume_Field_Map__mdt> activeMappings() {
         if (overrideMappings != null) { return overrideMappings; }
         return [
             SELECT DeveloperName, Label, Parse_Key__c, Extraction_Hint__c, Target_Object__c,
-                   Target_Field_API_Name__c, Data_Type__c, Picklist_Values__c, Max_Length__c,
+                   Target_Field_API_Name__c, Data_Type__c, Default_Value__c, Picklist_Values__c, Max_Length__c,
                    Include_In_Prompt__c, Show_In_Review__c, Read_Only__c, Is_Active__c, Sort_Order__c
             FROM Resume_Field_Map__mdt
             WHERE Is_Active__c = true
@@ -98,169 +88,337 @@ public with sharing class ResumeParsing {
         ];
     }
 
-    /** Active mappings whose Target Object is the given object (parent vs. child routing). */
-    private static List<Resume_Field_Map__mdt> mappingsFor(String targetObject) {
+    private static String canonicalScope(String targetObject) {
+        if (CANDIDATE_SCOPE.equalsIgnoreCase(targetObject)) { return CANDIDATE_SCOPE; }
+        if (ROLE_SCOPE.equalsIgnoreCase(targetObject)) { return ROLE_SCOPE; }
+        return null;
+    }
+
+    private static Map<String, Schema.SObjectField> fieldsForScope(String scope) {
+        if (scope == CANDIDATE_SCOPE) {
+            return Resume_Data__c.SObjectType.getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap();
+        }
+        if (scope == ROLE_SCOPE) {
+            return Work_Experience__c.SObjectType.getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap();
+        }
+        return null;
+    }
+
+    private static Schema.SObjectField resolveField(Map<String, Schema.SObjectField> fields, String apiName) {
+        if (fields == null || String.isBlank(apiName) || apiName.contains('.')) { return null; }
+        Schema.SObjectField out = fields.get(apiName);
+        return out == null ? fields.get(apiName.toLowerCase()) : out;
+    }
+
+    private static Map<String, Integer> parseKeyCounts(List<Resume_Field_Map__mdt> rows) {
+        Map<String, Integer> counts = new Map<String, Integer>();
+        for (Resume_Field_Map__mdt m : rows) {
+            String scope = canonicalScope(m.Target_Object__c);
+            if (scope == null || String.isBlank(m.Parse_Key__c)) { continue; }
+            String key = scope + '|' + m.Parse_Key__c.trim().toLowerCase();
+            counts.put(key, (counts.containsKey(key) ? counts.get(key) : 0) + 1);
+        }
+        return counts;
+    }
+
+    private static Map<String, Integer> editableTargetCounts(List<Resume_Field_Map__mdt> rows) {
+        Map<String, Integer> counts = new Map<String, Integer>();
+        for (Resume_Field_Map__mdt m : rows) {
+            String scope = canonicalScope(m.Target_Object__c);
+            if (scope == null || m.Read_Only__c == true || String.isBlank(m.Target_Field_API_Name__c)
+                || m.Target_Field_API_Name__c.contains('.')) { continue; }
+            String key = scope + '|' + m.Target_Field_API_Name__c.trim().toLowerCase();
+            counts.put(key, (counts.containsKey(key) ? counts.get(key) : 0) + 1);
+        }
+        return counts;
+    }
+
+    private static Boolean typeCompatible(String configuredType, Schema.DescribeFieldResult field) {
+        String actual = String.valueOf(field.getType()).toLowerCase();
+        if (configuredType == 'Date') { return actual == 'date'; }
+        if (configuredType == 'Checkbox') { return actual == 'boolean'; }
+        if (configuredType == 'Number') {
+            return new Set<String>{'integer', 'double', 'currency', 'percent'}.contains(actual);
+        }
+        if (configuredType == 'Picklist') { return actual == 'picklist'; }
+        if (configuredType == 'Email') { return actual == 'email' || actual == 'string'; }
+        if (configuredType == 'Phone') { return actual == 'phone' || actual == 'string'; }
+        if (configuredType == 'URL') { return actual == 'url' || actual == 'string'; }
+        return configuredType == 'Text' && new Set<String>{'string', 'textarea'}.contains(actual);
+    }
+
+    private static Boolean picklistValuesCompatible(Resume_Field_Map__mdt m, Schema.DescribeFieldResult field) {
+        List<String> configured = picklistValuesOf(m);
+        if (configured.isEmpty()) { return false; }
+        Set<String> activeTargetValues = new Set<String>();
+        for (Schema.PicklistEntry entry : field.getPicklistValues()) {
+            if (entry.isActive()) { activeTargetValues.add(entry.getValue()); }
+        }
+        for (String value : configured) {
+            if (!activeTargetValues.contains(value)) { return false; }
+        }
+        return true;
+    }
+
+    private static Boolean matchesAllowedPicklistValue(String value, Resume_Field_Map__mdt m) {
+        String normalized = normalizePicklistToken(value);
+        for (String option : picklistValuesOf(m)) {
+            if (normalizePicklistToken(option) == normalized) { return true; }
+        }
+        return false;
+    }
+
+    private static String defaultValueIssue(Resume_Field_Map__mdt m) {
+        if (String.isBlank(m.Default_Value__c)) { return null; }
+        String value = m.Default_Value__c.trim();
+        if (m.Data_Type__c == 'Date' && parseDate(value) == null) {
+            return 'Configured Default Value is not a valid Date.';
+        }
+        if (m.Data_Type__c == 'Checkbox'
+            && value.toLowerCase() != 'true' && value.toLowerCase() != 'false') {
+            return 'Configured Default Value for Checkbox must be true or false.';
+        }
+        if (m.Data_Type__c == 'Number' && parseNumber(value) == null) {
+            return 'Configured Default Value is not a valid Number.';
+        }
+        if (m.Data_Type__c == 'Picklist' && !matchesAllowedPicklistValue(value, m)) {
+            return 'Configured Default Value must match an allowed Picklist Value.';
+        }
+        return null;
+    }
+
+    private static String mappingIssue(Resume_Field_Map__mdt m, Map<String, Integer> parseCounts,
+                                       Map<String, Integer> targetCounts) {
+        String scope = canonicalScope(m.Target_Object__c);
+        if (scope == null) { return 'Unsupported target object; only Resume_Data__c and Work_Experience__c are allowed.'; }
+        if (String.isBlank(m.Parse_Key__c)) { return 'Parse key is required.'; }
+        if (scope == CANDIDATE_SCOPE && 'workExperiences'.equalsIgnoreCase(m.Parse_Key__c.trim())) {
+            return 'Reserved parse key; workExperiences is the repeating-role envelope.';
+        }
+        String countKey = scope + '|' + m.Parse_Key__c.trim().toLowerCase();
+        if (parseCounts.get(countKey) > 1) { return 'Duplicate parse key in the same scope.'; }
+        if (!SUPPORTED_TYPES.contains(m.Data_Type__c)) { return 'Unsupported data type.'; }
+        if (String.isBlank(m.Target_Field_API_Name__c) || m.Target_Field_API_Name__c.contains('.')) {
+            return 'A direct target field is required; relationship paths are not allowed.';
+        }
+        String targetKey = scope + '|' + m.Target_Field_API_Name__c.trim().toLowerCase();
+        if (m.Read_Only__c != true && targetCounts.get(targetKey) > 1) {
+            return 'Duplicate active editable target field in the same scope; each writable field requires exactly one mapping.';
+        }
+        Schema.SObjectField sof = resolveField(fieldsForScope(scope), m.Target_Field_API_Name__c);
+        if (sof == null) { return 'Target field does not exist on the allowed object.'; }
+        Schema.DescribeFieldResult describe = sof.getDescribe();
+        if (describe.isCalculated() || describe.isAutoNumber()) { return 'Calculated or auto-number target fields are not writable.'; }
+        if (!typeCompatible(m.Data_Type__c, describe)) { return 'Configured data type is incompatible with the target field.'; }
+        if (m.Data_Type__c == 'Picklist' && picklistValuesOf(m).isEmpty()) {
+            return 'Picklist Values are required for this mapping.';
+        }
+        if (m.Data_Type__c == 'Picklist' && !picklistValuesCompatible(m, describe)) {
+            return 'Configured Picklist Values must be active values on the target picklist.';
+        }
+        String defaultIssue = defaultValueIssue(m);
+        if (defaultIssue != null) { return defaultIssue; }
+        return null;
+    }
+
+    private static List<Resume_Field_Map__mdt> validMappingsFor(String requestedScope) {
+        List<Resume_Field_Map__mdt> allRows = activeMappings();
+        Map<String, Integer> parseCounts = parseKeyCounts(allRows);
+        Map<String, Integer> targetCounts = editableTargetCounts(allRows);
         List<Resume_Field_Map__mdt> out = new List<Resume_Field_Map__mdt>();
-        for (Resume_Field_Map__mdt m : activeMappings()) {
-            if (targetObject.equalsIgnoreCase(m.Target_Object__c)) { out.add(m); }
+        for (Resume_Field_Map__mdt m : allRows) {
+            String scope = canonicalScope(m.Target_Object__c);
+            if (scope == requestedScope && mappingIssue(m, parseCounts, targetCounts) == null) { out.add(m); }
         }
         return out;
     }
 
-    /**
-     * @description Read-only projection of the active field map for the wizard disclosure. Resolves
-     * each target field's label from the object describe (best-effort — null if the field can't be
-     * resolved, never throws). Ordered by Sort Order (activeMappings already orders). No DML.
-     */
+    private static FieldMapView viewFor(Resume_Field_Map__mdt m, String issue) {
+        FieldMapView v = new FieldMapView();
+        v.parseKey = m.Parse_Key__c;
+        v.targetObject = m.Target_Object__c;
+        v.targetField = m.Target_Field_API_Name__c;
+        v.dataType = m.Data_Type__c;
+        v.defaultValue = m.Default_Value__c;
+        v.showInReview = m.Show_In_Review__c == true;
+        v.readOnly = m.Read_Only__c == true;
+        v.sortOrder = m.Sort_Order__c;
+        v.supported = issue == null;
+        v.issue = issue;
+        v.options = m.Data_Type__c == 'Picklist' ? picklistValuesOf(m) : new List<String>();
+
+        String scope = canonicalScope(m.Target_Object__c);
+        Schema.SObjectField sof = resolveField(fieldsForScope(scope), m.Target_Field_API_Name__c);
+        if (sof != null) { v.targetLabel = sof.getDescribe().getLabel(); }
+        setInputShape(v, sof == null ? null : String.valueOf(sof.getDescribe().getType()).toLowerCase());
+        return v;
+    }
+
+    private static void setInputShape(FieldMapView v, String actualType) {
+        if (v.dataType == 'Picklist') { v.inputKind = 'picklist'; return; }
+        if (v.dataType == 'Checkbox') { v.inputKind = 'checkbox'; return; }
+        if (v.dataType == 'Text' && actualType == 'textarea') { v.inputKind = 'textarea'; return; }
+        v.inputKind = 'input';
+        if (v.dataType == 'Email') { v.inputType = 'email'; }
+        else if (v.dataType == 'Phone') { v.inputType = 'tel'; }
+        else if (v.dataType == 'URL') { v.inputType = 'url'; }
+        else if (v.dataType == 'Date') { v.inputType = 'date'; }
+        else if (v.dataType == 'Number') { v.inputType = 'number'; }
+        else { v.inputType = 'text'; }
+    }
+
+    /** All active rows for disclosure; invalid rows remain visible with supported=false + issue. */
     public static List<FieldMapView> fieldMapViews() {
-        Map<String, Map<String, Schema.SObjectField>> fieldsByObject =
-            new Map<String, Map<String, Schema.SObjectField>>{
-                'Resume_Data__c'     => Resume_Data__c.SObjectType.getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap(),
-                'Work_Experience__c' => Work_Experience__c.SObjectType.getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap()
-            };
+        List<Resume_Field_Map__mdt> rows = activeMappings();
+        Map<String, Integer> parseCounts = parseKeyCounts(rows);
+        Map<String, Integer> targetCounts = editableTargetCounts(rows);
         List<FieldMapView> views = new List<FieldMapView>();
-        for (Resume_Field_Map__mdt m : activeMappings()) {
-            FieldMapView v = new FieldMapView();
-            v.parseKey     = m.Parse_Key__c;
-            v.targetObject = m.Target_Object__c;
-            v.targetField  = m.Target_Field_API_Name__c;
-            v.dataType     = m.Data_Type__c;
-            v.showInReview = m.Show_In_Review__c == true;
-            v.readOnly     = m.Read_Only__c == true;
-            v.sortOrder    = m.Sort_Order__c;
-            Map<String, Schema.SObjectField> fmap = String.isBlank(m.Target_Object__c)
-                ? null : fieldsByObject.get(m.Target_Object__c);
-            if (fmap != null && String.isNotBlank(m.Target_Field_API_Name__c)) {
-                Schema.SObjectField sof = fmap.get(m.Target_Field_API_Name__c.toLowerCase());
-                if (sof != null) { v.targetLabel = sof.getDescribe().getLabel(); }
-            }
-            views.add(v);
+        for (Resume_Field_Map__mdt m : rows) {
+            views.add(viewFor(m, mappingIssue(m, parseCounts, targetCounts)));
         }
         return views;
     }
 
-    /**
-     * @description Build the ENTIRE extraction schema from the active CMDT rows — the prompt template
-     * has NO hardcoded field names, so this method is the single source of truth for what the AI is
-     * asked to return. Candidate-level rows (Target Object = Resume_Data__c) become top-level keys;
-     * work-experience rows (Target Object = Work_Experience__c) become the keys of each object inside a
-     * "workExperiences" array. Each promptable row (Include_In_Prompt = true) is emitted exactly once
-     * with a type-aware format instruction plus the admin's Extraction Hint. Fed into the template via
-     * {!$Input:ExtraInstructions}; the template just wraps it in braces and the JSON rules. Existing
-     * typed wire keys can be retargeted or tuned in CMDT without a template change; brand-new keys
-     * still require Apex DTO and LWC support.
-     */
+    // ── Prompt schema and generic review envelopes ─────────────────────────
+
     public static String buildExtraInstructions() {
         List<String> candLines = new List<String>();
-        List<String> weLines = new List<String>();
-        for (Resume_Field_Map__mdt m : activeMappings()) {
-            if (m.Include_In_Prompt__c != true || String.isBlank(m.Parse_Key__c)) { continue; }
-            String hintText = String.isBlank(m.Extraction_Hint__c) ? '' : m.Extraction_Hint__c.trim();
-            String tail = m.Data_Type__c == 'Checkbox' ? ' Use false if not indicated.' : ' Empty string if not found.';
-            String keyDesc = (schemaGuidance(m.Data_Type__c) + hintText + tail).trim();  // 'desc' is a reserved Apex identifier
-            String body = '"' + m.Parse_Key__c + '": "' + keyDesc + '"';
-            if ('Work_Experience__c'.equalsIgnoreCase(m.Target_Object__c)) { weLines.add('      ' + body); }
-            else { candLines.add('  ' + body); }
+        List<String> roleLines = new List<String>();
+        List<Resume_Field_Map__mdt> candidateMappings = validMappingsFor(CANDIDATE_SCOPE);
+        List<Resume_Field_Map__mdt> roleMappings = validMappingsFor(ROLE_SCOPE);
+        for (Resume_Field_Map__mdt m : candidateMappings) {
+            if (m.Include_In_Prompt__c == true) { candLines.add('  ' + promptLine(m)); }
+        }
+        for (Resume_Field_Map__mdt m : roleMappings) {
+            if (m.Include_In_Prompt__c == true) { roleLines.add('      ' + promptLine(m)); }
         }
         List<String> parts = new List<String>(candLines);
-        if (!weLines.isEmpty()) {
-            parts.add('  "workExperiences": [\n    {\n' + String.join(weLines, ',\n') + '\n    }\n  ]');
+        if (!roleLines.isEmpty()) {
+            parts.add('  "workExperiences": [\n    {\n' + String.join(roleLines, ',\n') + '\n    }\n  ]');
         }
         return String.join(parts, ',\n');
     }
 
-    /** Type-aware formatting guidance prepended to each key's description so values come back clean. */
+    private static String promptLine(Resume_Field_Map__mdt m) {
+        String hintText = String.isBlank(m.Extraction_Hint__c) ? '' : m.Extraction_Hint__c.trim();
+        List<String> options = m.Data_Type__c == 'Picklist' ? picklistValuesOf(m) : new List<String>();
+        String allowed = options.isEmpty() ? '' : ' Allowed values: ' + String.join(options, ', ') + '.';
+        String defaultGuidance = String.isBlank(m.Default_Value__c)
+            ? '' : ' Configured default when the extracted value is empty: ' + m.Default_Value__c.trim() + '.';
+        String tail = String.isNotBlank(m.Default_Value__c)
+            ? ' Use the configured default if no value is found.'
+            : (m.Data_Type__c == 'Checkbox' ? ' Use false if not indicated.' : ' Empty string if not found.');
+        String description = (schemaGuidance(m.Data_Type__c) + hintText + allowed + defaultGuidance + tail).trim();
+        // Admin-authored keys and hints can contain quotes, slashes, or newlines. Serialize both
+        // strings so one mapping can never corrupt the complete generated JSON schema.
+        return JSON.serialize(m.Parse_Key__c) + ': ' + JSON.serialize(description);
+    }
+
     private static String schemaGuidance(String dataType) {
         if (dataType == 'Number') { return 'A plain number with no symbols or commas. '; }
-        if (dataType == 'Date')   { return 'A date formatted YYYY-MM-DD (or YYYY-MM / YYYY if only partly known). '; }
+        if (dataType == 'Date') { return 'A date formatted YYYY-MM-DD (or YYYY-MM / YYYY if only partly known). '; }
         if (dataType == 'Checkbox') { return 'A boolean true/false. '; }
+        if (dataType == 'URL') { return 'A complete URL. '; }
         return '';
     }
 
-    /**
-     * @description Parse the LLM's raw JSON string into a ParseResult of editable drafts, driven by
-     * the CMDT map: candidate-level rows (Target Object = Resume_Data__c) are read from the top level;
-     * work-experience rows (Target Object = Work_Experience__c) are read from each element of the
-     * workExperiences[] array. Each value is coerced per its Data Type / Max Length / Picklist Values.
-     * No DML. Used to populate the wizard's preview.
-     */
     public static ParseResult toDrafts(String rawJson) {
         Map<String, Object> parsed = (Map<String, Object>) JSON.deserializeUntyped(stripCodeFences(rawJson));
-
-        // Candidate-level: build a Parse-Key-keyed map of coerced values, then hydrate the typed
-        // ParseResult from it (member names == parse keys, so a JSON round-trip binds them).
-        Map<String, Object> candVals = new Map<String, Object>();
-        for (Resume_Field_Map__mdt m : mappingsFor('Resume_Data__c')) {
-            candVals.put(m.Parse_Key__c, coerceForDraft(parsed.get(m.Parse_Key__c), m));
+        ParseResult out = new ParseResult();
+        for (Resume_Field_Map__mdt m : validMappingsFor(CANDIDATE_SCOPE)) {
+            out.candidateFields.add(toFieldDraft(m, parsed.get(m.Parse_Key__c)));
         }
-        ParseResult out = (ParseResult) JSON.deserialize(JSON.serialize(candVals), ParseResult.class);
-        out.workExperiences = new List<WorkExperienceDraft>();
 
-        List<Resume_Field_Map__mdt> weMappings = mappingsFor('Work_Experience__c');
-        List<Object> exps = (parsed.get('workExperiences') instanceof List<Object>)
-            ? (List<Object>) parsed.get('workExperiences')
-            : new List<Object>();
-
+        List<Resume_Field_Map__mdt> roleMappings = validMappingsFor(ROLE_SCOPE);
+        List<Object> roles = parsed.get('workExperiences') instanceof List<Object>
+            ? (List<Object>) parsed.get('workExperiences') : new List<Object>();
         Integer count = 0;
-        for (Object o : exps) {
+        for (Object roleObject : roles) {
             if (count >= MAX_ROWS) { break; }
-            if (!(o instanceof Map<String, Object>)) { continue; }
-            Map<String, Object> item = (Map<String, Object>) o;
-
-            Map<String, Object> row = new Map<String, Object>{ 'rowId' => 'row-' + count };
-            for (Resume_Field_Map__mdt m : weMappings) {
-                row.put(m.Parse_Key__c, coerceForDraft(item.get(m.Parse_Key__c), m));
+            if (!(roleObject instanceof Map<String, Object>)) { continue; }
+            Map<String, Object> values = (Map<String, Object>) roleObject;
+            WorkExperienceDraft role = new WorkExperienceDraft();
+            role.rowId = 'row-' + count;
+            for (Resume_Field_Map__mdt m : roleMappings) {
+                role.fields.add(toFieldDraft(m, values.get(m.Parse_Key__c)));
             }
-            out.workExperiences.add(
-                (WorkExperienceDraft) JSON.deserialize(JSON.serialize(row), WorkExperienceDraft.class));
+            out.workExperiences.add(role);
             count++;
         }
         return out;
     }
 
-    /**
-     * @description Commit a set of drafts as the children of a parent resume, replacing any
-     * existing children — driven by the CMDT map (Work_Experience__c rows). Concurrency-safe:
-     * locks the parent first so racing transactions serialize, then deletes + inserts so the
-     * result is exactly one clean set (handles the Atlas-planner-fires-twice case and re-runs
-     * identically). Returns the inserted rows.
-     */
+    private static FieldDraft toFieldDraft(Resume_Field_Map__mdt m, Object rawValue) {
+        FieldMapView view = viewFor(m, null);
+        FieldDraft f = new FieldDraft();
+        f.parseKey = view.parseKey;
+        f.label = String.isBlank(view.targetLabel) ? view.parseKey : view.targetLabel;
+        f.targetObject = canonicalScope(view.targetObject);
+        f.targetField = view.targetField;
+        f.dataType = view.dataType;
+        f.value = canonicalDraftValue(rawValue, m);
+        f.showInReview = view.showInReview;
+        f.readOnly = view.readOnly;
+        f.sortOrder = view.sortOrder;
+        f.inputKind = view.inputKind;
+        f.inputType = view.inputType;
+        f.options = view.options;
+        return f;
+    }
+
+    private static String canonicalDraftValue(Object rawValue, Resume_Field_Map__mdt m) {
+        Object effectiveValue = rawValue;
+        if (rawValue == null || (rawValue instanceof String && String.isBlank((String) rawValue))) {
+            effectiveValue = String.isBlank(m.Default_Value__c) ? rawValue : m.Default_Value__c.trim();
+        }
+        if (m.Data_Type__c == 'Checkbox') { return String.valueOf(asBoolean(effectiveValue)); }
+        if (m.Data_Type__c == 'Date') { return normalizeDateString(asString(effectiveValue)); }
+        if (m.Data_Type__c == 'Number') {
+            Decimal value = parseNumber(asString(effectiveValue));
+            return value == null ? null : String.valueOf(value);
+        }
+        if (m.Data_Type__c == 'Picklist') { return coercePicklist(asString(effectiveValue), m); }
+        return truncate(asString(effectiveValue), maxLenOf(m));
+    }
+
+    /** Parse-key/value map from a client envelope. Client-supplied target metadata is never trusted. */
+    public static Map<String, Object> valuesFromFields(List<FieldDraft> fields) {
+        Map<String, Object> values = new Map<String, Object>();
+        if (fields == null) { return values; }
+        for (FieldDraft field : fields) {
+            if (field != null && String.isNotBlank(field.parseKey)) {
+                values.put(field.parseKey, field.value);
+            }
+        }
+        return values;
+    }
+
+    // ── Persistence ────────────────────────────────────────────────────────
+
     public static List<Work_Experience__c> commitDrafts(Id resumeId, List<WorkExperienceDraft> drafts) {
-        // Serialize concurrent commits against the same parent and fail clearly if it is gone.
         List<Resume_Data__c> lockedParents = [
             SELECT Id FROM Resume_Data__c WHERE Id = :resumeId FOR UPDATE
         ];
-        if (lockedParents.isEmpty()) {
-            throw new AuraHandledException('The resume record no longer exists.');
-        }
+        if (lockedParents.isEmpty()) { throw new AuraHandledException('The resume record no longer exists.'); }
 
-        Map<String, Schema.SObjectField> weFields = Work_Experience__c.SObjectType
-            .getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap();
-        List<Resume_Field_Map__mdt> weMappings = mappingsFor('Work_Experience__c');
-
+        Map<String, Schema.SObjectField> fields = fieldsForScope(ROLE_SCOPE);
+        List<Resume_Field_Map__mdt> mappings = validMappingsFor(ROLE_SCOPE);
         List<Work_Experience__c> rows = new List<Work_Experience__c>();
         Integer count = 0;
         if (drafts != null) {
-            for (WorkExperienceDraft d : drafts) {
+            for (WorkExperienceDraft draft : drafts) {
                 if (count >= MAX_ROWS) { break; }
-                // The draft's member names are the CMDT parse keys, so serialize→untyped gives a
-                // Parse-Key-keyed map the commit loop can read from generically.
-                Map<String, Object> vals = (Map<String, Object>) JSON.deserializeUntyped(JSON.serialize(d));
-
-                Work_Experience__c we = new Work_Experience__c(Resume_Data__c = resumeId);
-                for (Resume_Field_Map__mdt m : weMappings) {
-                    if (m.Read_Only__c == true) { continue; }   // read-only reference fields never commit
-                    putCoerced(we, weFields, m, vals.get(m.Parse_Key__c));
+                Map<String, Object> values = valuesFromFields(draft == null ? null : draft.fields);
+                Work_Experience__c row = new Work_Experience__c(Resume_Data__c = resumeId);
+                for (Resume_Field_Map__mdt m : mappings) {
+                    if (m.Read_Only__c == true) { continue; }
+                    putCoerced(row, fields, m, values.get(m.Parse_Key__c));
                 }
-
-                // External key is the dedupe identity (company|title|startDate) — domain logic, not a
-                // field mapping — so it reads the stable parse keys directly.
-                String company = truncate(asString(vals.get('company')), 255);
-                String title   = truncate(asString(vals.get('title')), 255);
-                Date startDate = parseDate(asString(vals.get('startDate')));
-                we.External_Key__c = buildExternalKey(resumeId, company, title, startDate);
-
-                rows.add(we);
+                String company = truncate(asString(row.get('Company_Name__c')), 255);
+                String title = truncate(asString(row.get('Job_Title__c')), 255);
+                Date startDate = (Date) row.get('Start_Date__c');
+                row.External_Key__c = buildExternalKey(resumeId, company, title, startDate);
+                rows.add(row);
                 count++;
             }
         }
@@ -270,170 +428,134 @@ public with sharing class ResumeParsing {
         return rows;
     }
 
-    /**
-     * @description Apply candidate-level (Resume_Data__c) values onto the parent record via the CMDT
-     * map, given a Parse-Key-keyed map of values (e.g. from a CandidateDraft or a ParseResult).
-     * Dynamic put per field via putCoerced (system-mode; no per-field FLS gate — see putCoerced's
-     * note on why). The caller owns the DML.
-     */
-    public static void applyCandidateFields(Resume_Data__c parent, Map<String, Object> vals) {
-        if (vals == null) { return; }
-        Map<String, Schema.SObjectField> rdFields = Resume_Data__c.SObjectType
-            .getDescribe(SObjectDescribeOptions.DEFERRED).fields.getMap();
-        for (Resume_Field_Map__mdt m : mappingsFor('Resume_Data__c')) {
+    public static void applyCandidateFields(Resume_Data__c parent, List<FieldDraft> fields) {
+        applyCandidateValues(parent, valuesFromFields(fields));
+    }
+
+    @TestVisible private static void applyCandidateValues(Resume_Data__c parent, Map<String, Object> values) {
+        if (values == null) { return; }
+        Map<String, Schema.SObjectField> fields = fieldsForScope(CANDIDATE_SCOPE);
+        for (Resume_Field_Map__mdt m : validMappingsFor(CANDIDATE_SCOPE)) {
             if (m.Read_Only__c == true) { continue; }
-            putCoerced(parent, rdFields, m, vals.get(m.Parse_Key__c));
+            putCoerced(parent, fields, m, values.get(m.Parse_Key__c));
         }
     }
 
-    /**
-     * @description Dynamic assignment of one coerced value onto a record, per the mapping's Data Type.
-     * Skips blank target fields and unknown/typo field names (so a bad mapping is inert rather than
-     * fatal). This class is `with sharing` and the wizard write is admin-driven, matching the original
-     * behavior of assigning the fields directly — no per-field FLS gate (which would silently drop
-     * fields for any user not granted FLS on them, e.g. before the permission set is assigned).
-     */
-    private static void putCoerced(SObject rec, Map<String, Schema.SObjectField> fields,
-                                   Resume_Field_Map__mdt m, Object rawVal) {
+    private static void putCoerced(SObject record, Map<String, Schema.SObjectField> fields,
+                                   Resume_Field_Map__mdt m, Object rawValue) {
+        Schema.SObjectField sof = resolveField(fields, m.Target_Field_API_Name__c);
+        if (sof == null) { return; } // defensive; validMappingsFor already rejected it
         String apiName = m.Target_Field_API_Name__c;
-        if (String.isBlank(apiName)) { return; }
-        Schema.SObjectField sof = fields.get(apiName.toLowerCase());
-        if (sof == null) { return; }
-
-        String dt = m.Data_Type__c;
-        if (dt == 'Date') {
-            rec.put(apiName, parseDate(asString(rawVal)));
-        } else if (dt == 'Checkbox') {
-            rec.put(apiName, asBoolean(rawVal));
-        } else if (dt == 'Number') {
-            rec.put(apiName, parseNumber(asString(rawVal)));
-        } else if (dt == 'Picklist') {
-            rec.put(apiName, coercePicklist(asString(rawVal), m));
-        } else {
-            rec.put(apiName, truncate(asString(rawVal), maxLenOf(m)));   // Text / Email / Phone
-        }
+        if (m.Data_Type__c == 'Date') { record.put(apiName, parseDate(asString(rawValue))); }
+        else if (m.Data_Type__c == 'Checkbox') { record.put(apiName, asBoolean(rawValue)); }
+        else if (m.Data_Type__c == 'Number') { record.put(apiName, parseNumber(asString(rawValue))); }
+        else if (m.Data_Type__c == 'Picklist') { record.put(apiName, coercePicklist(asString(rawValue), m)); }
+        else { record.put(apiName, truncate(asString(rawValue), maxLenOf(m))); }
     }
 
-    /** Coerce a raw JSON value into the string/boolean a draft field expects, per the mapping. */
-    private static Object coerceForDraft(Object rawVal, Resume_Field_Map__mdt m) {
-        String dt = m.Data_Type__c;
-        if (dt == 'Checkbox') { return asBoolean(rawVal); }
-        if (dt == 'Date')     { return normalizeDateString(asString(rawVal)); }
-        if (dt == 'Picklist') { return coercePicklist(asString(rawVal), m); }
-        return truncate(asString(rawVal), maxLenOf(m));   // Text / Email / Phone / Number (as string)
-    }
+    // ── Coercion helpers ──────────────────────────────────────────────────
 
     private static Integer maxLenOf(Resume_Field_Map__mdt m) {
         return m.Max_Length__c == null ? null : Integer.valueOf(m.Max_Length__c);
     }
 
-    /** Allowed picklist values for a mapping — the CMDT list, falling back to EMPLOYMENT_TYPES. */
-    private static List<String> picklistValuesOf(Resume_Field_Map__mdt m) {
-        if (String.isBlank(m.Picklist_Values__c)) { return EMPLOYMENT_TYPES; }
+    private static List<String> configuredPicklistValuesOf(Resume_Field_Map__mdt m) {
         List<String> out = new List<String>();
+        if (String.isBlank(m.Picklist_Values__c)) { return out; }
         for (String part : m.Picklist_Values__c.split('[\\r\\n,]+')) {
             if (String.isNotBlank(part)) { out.add(part.trim()); }
         }
-        return out.isEmpty() ? EMPLOYMENT_TYPES : out;
+        return out;
     }
 
-    /** Snap a value to one of the mapping's allowed picklist values; unknown non-blank → 'Other' if allowed. */
-    private static String coercePicklist(String s, Resume_Field_Map__mdt m) {
-        if (String.isBlank(s)) { return null; }
+    private static List<String> picklistValuesOf(Resume_Field_Map__mdt m) {
+        return configuredPicklistValuesOf(m);
+    }
+
+    private static String normalizePicklistToken(String value) {
+        return String.isBlank(value) ? '' : value.trim().toLowerCase().replaceAll('[\\s\\-]+', '');
+    }
+
+    private static String coercePicklist(String value, Resume_Field_Map__mdt m) {
+        if (String.isBlank(value)) { return null; }
         List<String> allowed = picklistValuesOf(m);
-        for (String v : allowed) {
-            if (v.equalsIgnoreCase(s.trim())) { return v; }
+        String normalized = normalizePicklistToken(value);
+        for (String option : allowed) {
+            if (normalizePicklistToken(option) == normalized) { return option; }
         }
-        for (String v : allowed) {
-            if (v.equalsIgnoreCase('Other')) { return 'Other'; }
+        for (String option : allowed) {
+            if (option.equalsIgnoreCase('Other')) { return option; }
         }
         return null;
     }
 
-    // ── Coercion / formatting helpers ──
-
-    /** Removes ```json ... ``` fences the LLM sometimes wraps around the output. */
     public static String stripCodeFences(String raw) {
         if (String.isBlank(raw)) { return '{}'; }
-        String s = raw.trim();
-        if (s.startsWith('```')) {
-            s = s.replaceFirst('^```[a-zA-Z]*\\s*', '');
-            if (s.endsWith('```')) {
-                s = s.substring(0, s.length() - 3);
-            }
+        String value = raw.trim();
+        if (value.startsWith('```')) {
+            value = value.replaceFirst('^```[a-zA-Z]*\\s*', '');
+            if (value.endsWith('```')) { value = value.substring(0, value.length() - 3); }
         }
-        Integer first = s.indexOf('{');
-        Integer last  = s.lastIndexOf('}');
-        if (first >= 0 && last > first) {
-            s = s.substring(first, last + 1);
-        }
-        return s.trim();
+        Integer first = value.indexOf('{');
+        Integer last = value.lastIndexOf('}');
+        if (first >= 0 && last > first) { value = value.substring(first, last + 1); }
+        return value.trim();
     }
 
-    public static String asString(Object o) {
-        return o == null ? null : String.valueOf(o).trim();
+    public static String asString(Object value) {
+        return value == null ? null : String.valueOf(value).trim();
     }
 
-    public static Boolean asBoolean(Object o) {
-        if (o instanceof Boolean) { return (Boolean) o; }
-        if (o == null) { return false; }
-        String s = String.valueOf(o).trim().toLowerCase();
-        return s == 'true' || s == 'yes' || s == 'current' || s == 'present';
+    public static Boolean asBoolean(Object value) {
+        if (value instanceof Boolean) { return (Boolean) value; }
+        if (value == null) { return false; }
+        String normalized = String.valueOf(value).trim().toLowerCase();
+        return normalized == 'true' || normalized == 'yes' || normalized == 'current' || normalized == 'present';
     }
 
-    /** Truncate to max; null/blank → null; a null max means "no limit". */
-    public static String truncate(String s, Integer max) {
-        if (String.isBlank(s)) { return null; }
-        if (max == null) { return s; }
-        return s.length() > max ? s.substring(0, max) : s;
+    public static String truncate(String value, Integer maxLength) {
+        if (String.isBlank(value)) { return null; }
+        if (maxLength == null) { return value; }
+        return value.length() > maxLength ? value.substring(0, maxLength) : value;
     }
 
-    /** Strip everything but digits/decimal/sign; parse to Decimal. Null on failure. */
-    public static Decimal parseNumber(String s) {
-        if (String.isBlank(s)) { return null; }
-        String t = s.replaceAll('[^0-9.\\-]', '');
-        if (String.isBlank(t)) { return null; }
-        try { return Decimal.valueOf(t); } catch (Exception e) { return null; }
+    public static Decimal parseNumber(String value) {
+        if (String.isBlank(value)) { return null; }
+        String normalized = value.replaceAll('[^0-9.\\-]', '');
+        if (String.isBlank(normalized)) { return null; }
+        try { return Decimal.valueOf(normalized); } catch (Exception ignored) { return null; }
     }
 
-    /** Accepts YYYY-MM-DD, YYYY-MM, or YYYY; returns null on anything else. */
-    public static Date parseDate(String s) {
-        if (String.isBlank(s)) { return null; }
-        String t = s.trim();
-        if (t.equalsIgnoreCase('present') || t.equalsIgnoreCase('current')) { return null; }
+    public static Date parseDate(String value) {
+        if (String.isBlank(value)) { return null; }
+        String normalized = value.trim();
+        if (normalized.equalsIgnoreCase('present') || normalized.equalsIgnoreCase('current')) { return null; }
         try {
-            Pattern p = Pattern.compile('^(\\d{4})(?:-(\\d{1,2}))?(?:-(\\d{1,2}))?');
-            Matcher mm = p.matcher(t);
-            if (mm.find()) {
-                Integer y = Integer.valueOf(mm.group(1));
-                Integer mo = mm.group(2) != null ? Integer.valueOf(mm.group(2)) : 1;
-                Integer d = mm.group(3) != null ? Integer.valueOf(mm.group(3)) : 1;
-                if (mo < 1 || mo > 12) { mo = 1; }
-                if (d < 1 || d > 28) { d = 1; }
-                return Date.newInstance(y, mo, d);
+            Pattern pattern = Pattern.compile('^(\\d{4})(?:-(\\d{2})(?:-(\\d{2}))?)?$');
+            Matcher match = pattern.matcher(normalized);
+            if (match.matches()) {
+                Integer year = Integer.valueOf(match.group(1));
+                Integer month = match.group(2) == null ? 1 : Integer.valueOf(match.group(2));
+                Integer day = match.group(3) == null ? 1 : Integer.valueOf(match.group(3));
+                if (month < 1 || month > 12 || day < 1 || day > 31) { return null; }
+                // Apex can normalize out-of-range dates, so verify the constructed calendar parts.
+                Date parsed = Date.newInstance(year, month, day);
+                return parsed.year() == year && parsed.month() == month && parsed.day() == day
+                    ? parsed : null;
             }
-        } catch (Exception ignored) { /* fall through */ }
+        } catch (Exception ignored) { /* fail closed */ }
         return null;
     }
 
-    /** Normalize a date string for display in the editor (round-trips through parseDate). */
-    public static String normalizeDateString(String s) {
-        Date d = parseDate(s);
-        return d == null ? null : String.valueOf(d);  // yyyy-MM-dd
+    public static String normalizeDateString(String value) {
+        Date parsed = parseDate(value);
+        return parsed == null ? null : String.valueOf(parsed);
     }
 
-    /** Kept for back-compat; picklist coercion is now CMDT-driven via coercePicklist. */
-    public static String coerceEmploymentType(String s) {
-        if (String.isBlank(s)) { return null; }
-        for (String valid : EMPLOYMENT_TYPES) {
-            if (valid.equalsIgnoreCase(s.trim())) { return valid; }
-        }
-        return 'Other';
-    }
-
+    /** Stable résumé-domain child identity: parent + company + title + start date. */
     public static String buildExternalKey(Id resumeId, String company, String title, Date startDate) {
-        String sd = startDate == null ? '' : String.valueOf(startDate);
+        String datePart = startDate == null ? '' : String.valueOf(startDate);
         return (String.valueOf(resumeId) + '|' + (company == null ? '' : company)
-            + '|' + (title == null ? '' : title) + '|' + sd).left(255);
+            + '|' + (title == null ? '' : title) + '|' + datePart).left(255);
     }
 }

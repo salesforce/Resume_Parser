@@ -3,7 +3,7 @@
     <fullName>Data_Type__c</fullName>
     <label>Data Type</label>
     <type>Picklist</type>
-    <description>Drives value coercion for both the review draft and the commit: Date parses to a Date, Checkbox to a Boolean, Picklist is snapped to Picklist Values, Number to a Decimal, and Text/Email/Phone are truncated to Max Length.</description>
+    <description>Drives generic review input and commit coercion for allowed Resume Data / Work Experience fields: Date, Checkbox, Picklist, Number, Text, Email, Phone, or URL.</description>
     <valueSet>
         <restricted>true</restricted>
         <valueSetDefinition>
@@ -11,6 +11,7 @@
             <value><fullName>Text</fullName><default>true</default><label>Text</label></value>
             <value><fullName>Email</fullName><default>false</default><label>Email</label></value>
             <value><fullName>Phone</fullName><default>false</default><label>Phone</label></value>
+            <value><fullName>URL</fullName><default>false</default><label>URL</label></value>
             <value><fullName>Date</fullName><default>false</default><label>Date</label></value>
             <value><fullName>Checkbox</fullName><default>false</default><label>Checkbox</label></value>
             <value><fullName>Picklist</fullName><default>false</default><label>Picklist</label></value>

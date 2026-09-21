@@ -3,7 +3,7 @@
     <fullName>Picklist_Values__c</fullName>
     <label>Picklist Values</label>
     <type>LongTextArea</type>
-    <description>For Data Type = Picklist: the allowed values, one per line (or comma-separated). A parsed value is snapped case-insensitively to one of these; anything unmatched falls back to "Other" when present. Externalizes what used to be the hardcoded employment-type list.</description>
+    <description>Required for every Picklist mapping: allowed values, one per line or comma-separated. Values normalize case/space/hyphen variants; an unmatched nonblank value uses Other only when Other is explicitly configured. There is no implicit business-field fallback list.</description>
     <length>1000</length>
     <visibleLines>4</visibleLines>
 </CustomField>

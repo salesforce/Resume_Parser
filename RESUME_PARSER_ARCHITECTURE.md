@@ -103,10 +103,10 @@ sequenceDiagram
     A->>D: Create Resume_Data__c (Draft) + attach file
     A->>P: Invoke Extract_Work_Experience (vision)
     P-->>A: Candidate + roles as JSON
-    A-->>W: Editable fields (Draft parent + file persisted#59; no role children)
-    U->>W: Review, edit, confirm
-    W->>A: commitDrafts(resumeId, editedRows)
-    A->>D: Replace Work_Experience__c set, stamp Success
+    A-->>W: Generic candidate/role FieldDraft envelopes
+    U->>W: Review metadata-driven supported-type inputs
+    W->>A: commitDrafts(resumeId, parse-key/value envelopes)
+    A->>D: Revalidate allowlist, dynamic put, replace roles, stamp Success
     A-->>W: Saved count
     Note over D: Roles now visible on the Contact's Resume Data related list
 ```
@@ -124,6 +124,7 @@ erDiagram
         Lookup Contact__c "required"
         Text Candidate_Name__c
         Email Candidate_Email__c
+        Text Candidate_Website__c
         Picklist Processing_Status__c "Draft/Success/Error"
         Text Source_ContentDocumentId__c
         DateTime Last_Processed__c
@@ -144,24 +145,59 @@ The model is a two-level hierarchy under a Contact: **Contact → Resume Data �
 
 ### The field map (`Resume_Field_Map__mdt`) — mappings are data, not code
 
-The prompt instructions and target mapping for each supported wire key are defined in a **custom metadata type**, `Resume_Field_Map__mdt`. An admin can retarget or tune existing candidate/role keys—target field, length, hint, or allowed picklist values—without changing the prompt template. Adding a brand-new wire key also requires a matching member in the typed Apex DTO and a review control in the LWC.
+The prompt instructions, target mapping, coercion, and review behavior are defined in `Resume_Field_Map__mdt`. Active validated rows become generic `FieldDraft` envelopes; the LWC repeats metadata-driven inputs and columns, then returns parse-key/value envelopes for a fresh server-side map to commit with dynamic `SObject.put`. An admin can therefore add a field without named DTO members or named LWC controls, but only inside the strict résumé allowlist: direct fields on `Resume_Data__c` (candidate scope) or `Work_Experience__c` (repeating role scope), using supported compatible types. Each active editable target field may have exactly one mapping in its scope. Duplicate target mappings are ambiguous configuration—not ordering—and every colliding row fails closed before prompt, UI, or DML. Other objects, relationship paths, duplicate keys/targets, missing/incompatible fields, unsupported widgets/types, and invalid generic picklists are disclosed as ignored.
+
+```mermaid
+flowchart LR
+    M[(Active Resume_Field_Map__mdt)] --> V{Validate scope, direct field,<br/>unique key and editable target,<br/>compatible type and picklist values}
+    V -->|valid candidate scope| C[Candidate FieldDraft envelopes]
+    V -->|valid repeating scope| R[Role rows with stable id<br/>and FieldDraft list]
+    V -->|invalid or unsupported| X[Disclosure only<br/>ignored by prompt, UI, and DML]
+    C --> UI[Generic LWC supported-type renderer<br/>Show In Review includes<br/>Read Only disables]
+    R --> UI
+    UI --> KV[Parse-key value envelopes]
+    KV --> S[Reload trusted CMDT<br/>ignore client target metadata]
+    S -->|Resume_Data__c allowlist only| RD[(Resume_Data__c)]
+    S -->|Work_Experience__c allowlist only| WE[(Work_Experience__c)]
+```
 
 | Field | Purpose |
 |---|---|
-| `Parse_Key__c` | The JSON key the prompt emits and the wizard/commit reads (e.g. `company`). Also the draft field name the LWC round-trips — the single wire contract across prompt, LWC, and Apex. |
+| `Parse_Key__c` | The JSON key the prompt emits and the wizard/commit reads (e.g. `company`). It must be unique in its scope. Candidate mappings cannot use reserved structural key `workExperiences`, which exclusively names the repeating role array. |
 | `Target_Object__c` | Routes the mapping to the **parent** `Resume_Data__c` (a single candidate-level field, read from a top-level JSON key) or a **child** `Work_Experience__c` row (a repeating field, read from each element of the `workExperiences[]` array). This parent/child routing is the one dimension a flat map doesn't need. |
-| `Target_Field_API_Name__c` | The field the value is written to on commit. Blank = shown/extracted but never written. |
-| `Data_Type__c` | Drives coercion: `Date`→Date, `Checkbox`→Boolean, `Picklist`→snapped to Picklist Values, `Number`→Decimal, `Text`/`Email`/`Phone`→truncated to Max Length. |
-| `Picklist_Values__c` | Allowed values for a `Picklist` field (externalizes what used to be a hardcoded employment-type list). |
+| `Target_Field_API_Name__c` | A direct field on the allowed target object. An active editable `{Target Object, Target Field}` must be unique. Duplicate writable targets, blank/unknown/calculated/auto-number fields, and relationship paths fail closed. |
+| `Data_Type__c` | Drives generic input and commit coercion. The configured type must match the compatibility table below; mismatch is disclosed and inert. |
+| `Picklist_Values__c` | Allowed values for a `Picklist` field. They are included in prompt guidance; case/space/hyphen variants normalize to a configured value, while unsupported labels use the explicit `Other` fallback when present. |
+| `Default_Value__c` | Optional generic value used only when model output is blank. Explicit model/review values win. The default must pass the same type/picklist compatibility checks or the mapping is inert. |
 | `Max_Length__c` | Truncation length for text values (externalizes the old hardcoded 255/80/40/32000). |
 | `Extraction_Hint__c` | Per-key synonyms/instructions; `buildExtraInstructions()` appends this to each key's line in the CMDT-generated prompt schema. |
-| `Include_In_Prompt__c` · `Show_In_Review__c` · `Read_Only__c` · `Is_Active__c` · `Sort_Order__c` | Whether the AI is asked for it, whether it's shown in the review form, whether it's editable, whether the mapping is live, and its display order. |
+| `Include_In_Prompt__c` · `Show_In_Review__c` · `Read_Only__c` · `Is_Active__c` · `Sort_Order__c` | Whether a validated row enters the prompt, renders in generic review/table UI, is disabled and excluded from commit, is active, and where it sorts. Hidden non-read-only values remain eligible for mapped persistence; read-only values never write. |
 
-`ResumeParsing.activeMappings()` reads these rows (with a `@TestVisible` override seam so tests inject mappings in-memory). `toDrafts()` builds the review drafts by looping the map and reading each `Parse_Key__c`; the commit loops the map and does a dynamic `sObject.put(apiName, coercedValue)`, routing each value to the parent résumé or the child rows by `Target_Object__c`.
+| CMDT type | Compatible described target |
+|---|---|
+| `Text` | String or Text Area |
+| `Email` | Email or String |
+| `Phone` | Phone or String |
+| `URL` | URL or String |
+| `Date` | Date only; defaults must exactly match a valid `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` calendar value |
+| `Checkbox` | Boolean only |
+| `Number` | Integer, Double, Currency, or Percent |
+| `Picklist` | Picklist only; every mapping must explicitly configure values and each value must be active on the target picklist |
 
-**Field-map disclosure (v3.2.0).** The wizard surfaces the active map read-only: a collapsible **"How fields map"** section (default collapsed) lists each parse key → target object/field, type, and access. It's fed by `ResumeWizardController.getFieldMap()` (cacheable) → `ResumeParsing.fieldMapViews()`, which projects each active row and resolves the target field's label from the object describe (best-effort). This disclosure is display-only; edits to existing supported CMDT rows appear without a code change.
+The shipped Employment Type row keeps seven values, a cue-based closest-value hint, and configured default
+`Full-time`. Contract/contractor/consultant cues map to Contract; freelance/self-employed to Freelance;
+intern to Internship; temporary/seasonal to Temporary; when none of those cues exists, blank model output
+uses Full-time. Explicit unmatched nonblank labels use `Other`. The value remains visible/editable in review.
 
-> The résumé prompt template has **no hardcoded field list**. `ResumeParsing.buildExtraInstructions()` builds the extraction schema from the active `Resume_Field_Map__mdt` rows—top-level candidate keys plus a nested `workExperiences[]` array—then injects it through `{!$Input:ExtraInstructions}`. The template body stays generic. CMDT can retarget or tune the existing typed wire keys without a template change; a brand-new wire key also requires Apex DTO and LWC support.
+`ResumeParsing.activeMappings()` reads active rows. Validation enforces the two allowed scopes, one active editable mapping per target, compatible direct field types, and target-compatible picklist values before a row can enter `buildExtraInstructions()`, `toDrafts()`, or commit. `toDrafts()` creates generic candidate `FieldDraft` envelopes and repeating role envelopes with stable row ids. The LWC renders by `inputKind`/`inputType`, returns only parse-key/value envelopes, and the server deliberately ignores client-supplied target metadata. Commit reloads the trusted map, locks the parent, dynamically coerces and puts allowed values, replaces the child set, and derives `External_Key__c` from the persisted company/title/start-date fields rather than parse-key names.
+
+**Field-map projection and disclosure.** `ResumeWizardController.getFieldMap()` returns every active row, including invalid rows with `supported=false` and an issue. Only supported `Show_In_Review__c=true` rows become candidate inputs, role-detail inputs, or role-table columns. `Read_Only__c` disables the repeated input and the server excludes it from DML. Loading/failure fails closed by disabling upload until at least one supported row is available. The collapsible disclosure remains transparent about hidden, read-only, and ignored mappings.
+
+**Responsive dynamic role table.** Every supported role mapping with Show In Review remains a table column. Column definitions carry stable type/label-aware initial widths and wrapped values. `lightning-datatable` owns the single continuous, keyboard-accessible horizontal scroll surface; there is no outer nested scroller or scroll-snap boundary. Narrow Agentforce panels expose—not hide—every dynamic column and full label through the datatable's scrolling/wrapping. This is presentation only; it never changes mapping inclusion or persistence.
+
+> The prompt template has no hardcoded field list. Only validated prompt-enabled rows are injected as top-level candidate keys or nested `workExperiences[]` keys. This is Aurora-inspired dynamic rendering within the résumé allowlist—not an arbitrary-object automation engine—and intentionally omits Aurora-specific computed-date transforms, shared-field appends, relationship paths, and Opportunity assumptions.
+
+**Admin workflow.** A future `Candidate_Linkedin__c`-style field needs no named Apex/LWC. Create or choose one dedicated direct field on Resume Data or Work Experience; grant readable/editable FLS to intended users and Resume Parser User; confirm no other active editable mapping targets that exact object/field; create exactly one active row with a unique parse key, compatible supported type, extraction hint, prompt/review/read-only flags, ordering/length, explicit target-active picklist values when applicable, and an optional type-compatible Default Value only when the admin intentionally wants blank model output to be guessed/defaulted. Close and reopen the wizard after metadata changes because `getFieldMap()` is cacheable and the component loads mappings when it connects. Use disclosure to confirm Editable and test hint-driven prompt output, review, and persistence in a non-production org. `Ignored:` duplicate/type/picklist issues are inert and must be corrected, followed by another reopen. The Candidate Website field/FLS/layout ship, but its CMDT mapping is intentionally created in the post-release admin smoke test; create exactly one, then edit that row for later changes rather than adding a duplicate. The same flow covers future Candidate LinkedIn-style fields. New objects/widgets require reviewed source changes. `DYNAMIC_FIELD_ADMIN_UAT.md` provides the recommended post-release video/checklist and failure-reporting guidance; it is not a pre-push gate.
 
 ---
 
@@ -172,7 +208,7 @@ The prompt instructions and target mapping for each supported wire key are defin
 - **Code:** `ResumeWizardController` (`@AuraEnabled` upload/parse/commit), `ResumeParsing` (JSON coercion, date/picklist normalization, idempotent replace), `ResumeWizardData` (the CLT's backing type), plus unit tests.
 - **UI:** `resumeWizard` LWC (the wizard) and `resumeWizard` custom Lightning type that renders it in chat; `resumeWizard_Output` flow that surfaces it to the agent.
 - **Agent:** `Resume_Parser_Agent` — a standalone Agent Script employee agent: a router that resolves/confirms the Contact (using stock `IdentifyRecordByName` + `GetRecordDetails`) and a wizard subagent that opens the CLT. No custom Apex actions on the agent.
-- **Access:** a single `Resume Parser User` permission set (objects/fields/tabs + Apex + flows). Agent access is a separate manual grant post-deploy (the agent isn't packaged).
+- **Access:** a single packaged `Resume Parser User` permission set (objects/fields/tabs + Apex + flows) plus an idempotent post-publish `grant-agent-access.sh` reconciliation after the separate agent exists.
 
 ---
 
@@ -184,11 +220,11 @@ The prompt instructions and target mapping for each supported wire key are defin
 | **Required `Contact__c` lookup on the résumé** | Every résumé must roll up to a candidate; powers the Contact related list and keeps data anchored. |
 | **Prompt template, not Document AI** | Extraction is a single Flex vision prompt-template invocation — fewer moving parts, no separate OCR product to license. |
 | **Idempotent child commit (replace, not append)** | Recommitting the same Draft replaces its existing role children; Re-upload explicitly removes the current temporary Draft/file before starting over. |
-| **Existing wire-key mappings live in custom metadata (`Resume_Field_Map__mdt`)** | Target field, type/length/hint/picklist behavior for supported candidate/role keys is data, not prompt-template code. New wire keys still require typed Apex and LWC support. |
+| **Validated résumé field mappings live in custom metadata (`Resume_Field_Map__mdt`)** | New parse keys flow through generic field envelopes and repeated inputs without named DTO/control edits, but only for compatible direct fields on Resume Data or Work Experience. Invalid mappings are disclosed and inert. |
 | **Wizard owns the flow via Apex; agent just renders it** | The in-chat surface has no API to push data back to the conversation, so the LWC calls Apex directly — robust on every surface. |
 | **Stock CRM actions for contact resolution, not custom Apex** | `IdentifyRecordByName` + `GetRecordDetails` resolve and enrich the Contact; no Apex to write, test, or package for a standard read. Apex is reserved for what only Apex can do (JSON coercion, idempotent writes). |
 | **Confirm in the router + deterministic silent hand-off** | The wizard CLT renders only as the sole action of its subagent, so confirm and open are separate passes. Interpreting the "yes" in the router and transitioning at the top of reasoning hands off without stray chatter and keeps the wizard rendering reliably. |
-| **One permission set for the app** | A single `Resume Parser User` set covers objects/fields/tabs, Apex, and flows — one assignment for the packaged app. Agent access is added to the set manually after the agent is deployed (it can't be packaged), then re-assigned. |
+| **Packaged app permission, post-publish agent access** | `Resume Parser User` ships without a pre-agent dependency. After the separate agent exists, the idempotent helper adds/verifies only its access row; existing assignments inherit the update. |
 
 ---
 
@@ -205,16 +241,19 @@ flowchart TD
       PT[Prompt template + GenAiFunction + flow]
       PS[Permission sets]
     end
-    subgraph STEP [Source-deploy step - cannot be packaged]
+    subgraph STEP [Post-package steps - agent cannot be packaged]
       AGENT[Agent Script agent<br/>publish + activate]
+      ACCESS[Idempotent post-publish access<br/>retrieve, validate, deploy, verify]
+      AGENT --> ACCESS
     end
     PKG --> STEP
-    STEP --> LIVE([Live in the org])
+    PS --> ACCESS
+    ACCESS --> LIVE([Selectable in the Agentforce panel])
 ```
 
 - **Package:** `sf package install` (objects, Apex, LWC, CLT, prompt template, GenAiFunction, flows, permission set). Requires `packageMetadataAccess` for the prompt template and an Einstein-enabled org.
-- **Agent:** deploy the authoring bundle, publish it, identify the newly created version, and activate that exact version. `deploy-agent.sh` automates those supported steps and never edits generated agent metadata. Panel availability is verified/configured manually through supported Setup UI.
-- **One command:** `install.sh <org> <packageVersionId>` runs both and assigns the permission set.
+- **Agent:** deploy the authoring bundle, publish it, identify the newly created version, activate that exact version, then idempotently reconcile `Resume_Parser_Agent` access into the target's existing `Resume Parser User` set. `deploy-agent.sh` + `grant-agent-access.sh` automate supported metadata operations and never edit generated agent metadata. Panel availability is verified through supported UI.
+- **One command:** `install.sh <org> <packageVersionId>` runs package → agent → post-publish access → assignment in order.
 
 > **Production note.** A production-installable package version requires a code-coverage–validated build that is then promoted to "Released." A beta (skip-validation) version installs in sandbox/Developer orgs only.
 
@@ -223,13 +262,14 @@ flowchart TD
 ## 9. What the Implementation Team Should Plan For
 
 1. **Agentforce enablement.** The org needs Agentforce/Einstein turned on and Flex credits available for the prompt-template invocations.
-2. **The agent is a separate install step.** Budget the `deploy-agent.sh` run (publish + exact-version activate) after the package install — it can't ride inside the package.
+2. **The agent is a separate install step.** Budget the `deploy-agent.sh` run (publish + exact-version activate + idempotent post-publish access grant) after the package install — it can't ride inside the package.
 3. **Verify the intended panel surface.** In Setup, confirm the activated version is available in the Lightning Agentforce panel your users will use. Configure the supported employee-agent panel/channel for that org/release if needed; never edit generated agent metadata.
-4. **Grant agent access.** Activating the agent does not make it visible to users, and — because the agent isn't in the package — the packaged `Resume Parser User` permission set does **not** include an agent-access entry. After deploy, add `<agentAccesses><agentName>Resume_Parser_Agent</agentName><enabled>true</enabled></agentAccesses>` to the set and re-assign it (see the README).
+4. **Grant agent access after publication.** Activating the agent does not make it visible to users, and the packaged/source `Resume Parser User` permission set intentionally has no pre-agent dependency. `deploy-agent.sh` calls `grant-agent-access.sh`, which retrieves the current target set, adds only enabled `Resume_Parser_Agent` access when absent, validates/deploys, and retrieves again to verify. The helper is idempotent, so later agent republishes reinforce access without changing package install order or generated metadata.
 5. **Add the related list to the Contact layout.** The package doesn't overwrite the standard Contact layout, so add the **Resume Data** related list in Object Manager.
-6. **Assign the `Resume Parser User` permission set** to end users — after the separate agent-access entry is added, one assignment grants the app and agent access.
+6. **Assign the `Resume Parser User` permission set** to end users — one assignment grants the app plus the separately reconciled agent access; existing assignments inherit the update.
 7. **File types.** `.pdf`, `.png`, `.jpg` are the documented inputs; validate the configured model with sanitized representative files in the target org.
-8. **Production version.** If installing to production, use a code-coverage–validated package version promoted to Released.
+8. **Post-release admin smoke test.** Run the `DYNAMIC_FIELD_ADMIN_UAT.md` Candidate Website workflow after release to show shipped field/FLS + one admin-created mapping + fresh wizard + hint/review/persistence with no code deploy. Record PASS/FAIL and report failures; Candidate LinkedIn remains the future-field example.
+9. **Production version.** If installing to production, use a code-coverage–validated package version promoted to Released.
 
 ---
 

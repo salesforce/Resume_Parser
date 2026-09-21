@@ -23,8 +23,8 @@ public with sharing class ResumeWizardController {
     private static final String PROMPT_TEMPLATE = 'Extract_Work_Experience';
 
     /**
-     * @description Read-only view of the active Resume_Field_Map__mdt rows, for the wizard's
-     * "How fields map" disclosure. cacheable — pure SOQL + describe, no DML.
+     * @description Validated active Resume_Field_Map__mdt projection used by the generic review UI
+     * and the transparent "How fields map" disclosure. Cacheable — pure SOQL + describe, no DML.
      */
     @AuraEnabled(cacheable=true)
     public static List<ResumeParsing.FieldMapView> getFieldMap() {
@@ -91,8 +91,7 @@ public with sharing class ResumeWizardController {
             // before commit; the children are intentionally deferred to commit(). Which fields land
             // where is driven by the Resume_Field_Map__mdt map (Target Object = Resume_Data__c).
             Resume_Data__c stamp = new Resume_Data__c(Id = resume.Id);
-            ResumeParsing.applyCandidateFields(
-                stamp, (Map<String, Object>) JSON.deserializeUntyped(JSON.serialize(result)));
+            ResumeParsing.applyCandidateFields(stamp, result.candidateFields);
             update stamp;
             return result;
         } catch (Exception e) {
@@ -172,10 +171,9 @@ public with sharing class ResumeWizardController {
      * @description Step 2 — commit the user-reviewed drafts as the resume's children,
      * replacing any prior set, and stamp the parent Success. Returns the saved count.
      *
-     * rowsJson is the wizard's drafts as a JSON STRING (the LWC JSON.stringify's them).
-     * We deserialize here rather than declare a List<InnerClass> parameter: the LWC→Apex
-     * framework binding silently drops the inner-class field values (records get created
-     * with blank fields), whereas JSON.deserialize round-trips them reliably.
+     * rowsJson is the wizard's generic role envelopes as a JSON string; candidateJson is the
+     * generic candidate FieldDraft list. We deserialize here because direct LWC binding to Apex
+     * inner-class collections can silently drop member values.
      */
     @AuraEnabled
     public static Integer commitDrafts(String resumeDataId, String rowsJson, String candidateJson) {
@@ -199,12 +197,13 @@ public with sharing class ResumeWizardController {
             throw new AuraHandledException('The work experiences could not be read: ' + e.getMessage());
         }
 
-        // The user can edit candidate (résumé-level) fields in the preview too — apply those edits
-        // on commit so they persist alongside the work experiences.
-        ResumeParsing.CandidateDraft cand;
+        // Generic candidate field envelopes round-trip parseKey + value; server-side CMDT is still
+        // the only authority for target object/field/type.
+        List<ResumeParsing.FieldDraft> candidateFields;
         if (String.isNotBlank(candidateJson)) {
             try {
-                cand = (ResumeParsing.CandidateDraft) JSON.deserialize(candidateJson, ResumeParsing.CandidateDraft.class);
+                candidateFields = (List<ResumeParsing.FieldDraft>) JSON.deserialize(
+                    candidateJson, List<ResumeParsing.FieldDraft>.class);
             } catch (Exception e) {
                 throw new AuraHandledException('The candidate details could not be read: ' + e.getMessage());
             }
@@ -217,10 +216,8 @@ public with sharing class ResumeWizardController {
                 Processing_Status__c = 'Success',
                 Last_Processed__c = System.now()
             );
-            if (cand != null) {
-                // CMDT-driven: apply the edited candidate values per the Resume_Field_Map__mdt map.
-                ResumeParsing.applyCandidateFields(
-                    parent, (Map<String, Object>) JSON.deserializeUntyped(JSON.serialize(cand)));
+            if (candidateFields != null) {
+                ResumeParsing.applyCandidateFields(parent, candidateFields);
             }
             update parent;
             return saved.size();
@@ -236,8 +233,8 @@ public with sharing class ResumeWizardController {
      * The template has NO hardcoded field list: the entire extraction schema (candidate keys plus the
      * workExperiences[] role keys) is built from the active Resume_Field_Map__mdt rows by
      * ResumeParsing.buildExtraInstructions() and passed in via {!$Input:ExtraInstructions}. Existing
-     * typed wire keys can be retargeted in CMDT without changing the prompt template; new keys also
-     * require Apex DTO and LWC support.
+     * valid candidate/role keys can be added through CMDT without named DTO members. Runtime validation
+     * still restricts them to direct fields on Resume_Data__c and Work_Experience__c plus supported types.
      */
     private static String invokeTemplate(Id contentDocumentId) {
         ConnectApi.WrappedValue wv = new ConnectApi.WrappedValue();

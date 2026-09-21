@@ -1,20 +1,15 @@
 <!--
   Copyright (c) 2026, Salesforce, Inc.
   SPDX-License-Identifier: Apache-2.0
-  For full license text, see the LICENSE.txt file in the repo root or
-  https://opensource.org/licenses/Apache-2.0
 -->
 
 <template>
   <div class="wizard">
-
-    <!-- Header -->
     <div class="wizard-header">
       <h2 class="wizard-title">{title}</h2>
       <p class="wizard-subtitle">{subtitle}</p>
     </div>
 
-    <!-- Error banner (shared across steps) -->
     <template if:true={errorMessage}>
       <div class="banner banner_error" role="alert">
         <lightning-icon icon-name="utility:error" size="x-small" variant="inverse" alternative-text="Error"></lightning-icon>
@@ -22,9 +17,7 @@
       </div>
     </template>
 
-    <!-- STEP 1: Upload -->
     <template if:true={isUpload}>
-      <!-- Contact selection (pre-filled from the page when launched on a Contact) -->
       <div class="section">
         <p class="section-label">Contact</p>
         <lightning-record-picker
@@ -48,10 +41,21 @@
           <span class="file-chip-name">{fileName}</span>
         </div>
       </template>
+      <template if:true={isFieldMapLoading}>
+        <div class="centered-state">
+          <lightning-spinner alternative-text="Loading review configuration" size="small"></lightning-spinner>
+          <p class="state-text">Loading review configuration…</p>
+        </div>
+      </template>
+      <template if:true={isFieldMapError}>
+        <div class="banner banner_error" role="alert">
+          <lightning-icon icon-name="utility:error" size="x-small" variant="inverse" alternative-text="Error"></lightning-icon>
+          <span>No supported review configuration could be loaded. Fix the Resume Field Map and refresh.</span>
+        </div>
+      </template>
       <lightning-button variant="brand" label="Upload &amp; Parse" onclick={handleUploadAndParse} disabled={uploadDisabled} class="full-width-btn"></lightning-button>
     </template>
 
-    <!-- STEP: Parsing spinner -->
     <template if:true={isParsing}>
       <div class="centered-state">
         <lightning-spinner alternative-text="Parsing résumé" size="medium"></lightning-spinner>
@@ -59,32 +63,48 @@
       </div>
     </template>
 
-    <!-- STEP 2: Preview (table + pager + inline edit) -->
     <template if:true={isPreview}>
-      <!-- Candidate-level fields -->
-      <div class="section">
-        <p class="section-label">Candidate</p>
-        <div class="grid-2">
-          <lightning-input label="Name" data-field="candidateName" value={candidate.candidateName} onchange={handleCandidateChange}></lightning-input>
-          <lightning-input label="Email" type="email" data-field="candidateEmail" value={candidate.candidateEmail} onchange={handleCandidateChange}></lightning-input>
-          <lightning-input label="Phone" data-field="candidatePhone" value={candidate.candidatePhone} onchange={handleCandidateChange}></lightning-input>
+      <template if:true={hasVisibleCandidateFields}>
+        <div class="section">
+          <p class="section-label">Candidate</p>
+          <div class="grid-2">
+            <template for:each={visibleCandidateFields} for:item="field">
+              <div key={field.parseKey}>
+                <template if:true={field.isPicklist}>
+                  <lightning-combobox label={field.label} data-key={field.parseKey} value={field.value} options={field.options} disabled={field.disabled} onchange={handleCandidateChange}></lightning-combobox>
+                </template>
+                <template if:true={field.isCheckbox}>
+                  <lightning-input type="checkbox" label={field.label} data-key={field.parseKey} checked={field.checked} disabled={field.disabled} onchange={handleCandidateChange}></lightning-input>
+                </template>
+                <template if:true={field.isTextarea}>
+                  <lightning-textarea label={field.label} data-key={field.parseKey} value={field.value} disabled={field.disabled} onchange={handleCandidateChange}></lightning-textarea>
+                </template>
+                <template if:true={field.isInput}>
+                  <lightning-input type={field.inputType} label={field.label} data-key={field.parseKey} value={field.value} disabled={field.disabled} onchange={handleCandidateChange}></lightning-input>
+                </template>
+              </div>
+            </template>
+          </div>
         </div>
-      </div>
+      </template>
 
-      <!-- Summary table of all roles -->
-      <div class="section">
-        <p class="section-label">Parsed roles ({roleCount})</p>
-        <lightning-datatable
-          key-field="id"
-          data={tableRows}
-          columns={tableColumns}
-          hide-checkbox-column
-          onrowselection={handleRowSelect}
-          class="roles-table">
-        </lightning-datatable>
-      </div>
+      <template if:true={hasVisibleRoleTableFields}>
+        <div class="section">
+          <p class="section-label">Parsed roles ({roleCount})</p>
+          <!-- lightning-datatable owns the single continuous horizontal scroll surface. -->
+          <lightning-datatable
+            key-field="id"
+            data={tableRows}
+            columns={tableColumns}
+            column-widths-mode="fixed"
+            hide-checkbox-column
+            onrowselection={handleRowSelect}
+            aria-label="Parsed work experience fields"
+            class="roles-table">
+          </lightning-datatable>
+        </div>
+      </template>
 
-      <!-- Record pager + editable detail card -->
       <template if:true={hasDrafts}>
         <div class="section">
           <div class="pager">
@@ -94,16 +114,26 @@
           </div>
 
           <div class="role-card">
-            <div class="grid-2">
-              <lightning-input label="Company" data-field="company" value={activeDraft.company} onchange={handleDraftChange}></lightning-input>
-              <lightning-input label="Job Title" data-field="title" value={activeDraft.title} onchange={handleDraftChange}></lightning-input>
-              <lightning-input label="Start Date" type="date" data-field="startDate" value={activeDraft.startDate} onchange={handleDraftChange}></lightning-input>
-              <lightning-input label="End Date" type="date" data-field="endDate" value={activeDraft.endDate} onchange={handleDraftChange}></lightning-input>
-              <lightning-combobox label="Employment Type" data-field="employmentType" value={activeDraft.employmentType} options={employmentTypeOptions} onchange={handleDraftChange}></lightning-combobox>
-              <lightning-input label="Location" data-field="location" value={activeDraft.location} onchange={handleDraftChange}></lightning-input>
-            </div>
-            <lightning-input type="checkbox" label="Current role" data-field="isCurrent" checked={activeDraft.isCurrent} onchange={handleDraftChange} class="current-toggle"></lightning-input>
-            <lightning-textarea label="Description" data-field="description" value={activeDraft.description} onchange={handleDraftChange}></lightning-textarea>
+            <template if:true={hasVisibleRoleFields}>
+              <div class="grid-2">
+                <template for:each={activeDraftFields} for:item="field">
+                  <div key={field.parseKey}>
+                    <template if:true={field.isPicklist}>
+                      <lightning-combobox label={field.label} data-key={field.parseKey} value={field.value} options={field.options} disabled={field.disabled} onchange={handleDraftChange}></lightning-combobox>
+                    </template>
+                    <template if:true={field.isCheckbox}>
+                      <lightning-input type="checkbox" label={field.label} data-key={field.parseKey} checked={field.checked} disabled={field.disabled} onchange={handleDraftChange}></lightning-input>
+                    </template>
+                    <template if:true={field.isTextarea}>
+                      <lightning-textarea label={field.label} data-key={field.parseKey} value={field.value} disabled={field.disabled} onchange={handleDraftChange}></lightning-textarea>
+                    </template>
+                    <template if:true={field.isInput}>
+                      <lightning-input type={field.inputType} label={field.label} data-key={field.parseKey} value={field.value} disabled={field.disabled} onchange={handleDraftChange}></lightning-input>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
             <div class="role-actions">
               <lightning-button variant="destructive-text" label="Remove this role" icon-name="utility:delete" onclick={handleRemoveRole}></lightning-button>
             </div>
@@ -111,14 +141,12 @@
         </div>
       </template>
 
-      <!-- Commit actions -->
       <div class="footer-actions">
         <lightning-button variant="neutral" label="Re-upload" onclick={handleReset}></lightning-button>
         <lightning-button variant="brand" label={confirmLabel} icon-name="utility:save" onclick={handleConfirm}></lightning-button>
       </div>
     </template>
 
-    <!-- STEP: Committing spinner -->
     <template if:true={isCommitting}>
       <div class="centered-state">
         <lightning-spinner alternative-text="Saving" size="medium"></lightning-spinner>
@@ -126,7 +154,6 @@
       </div>
     </template>
 
-    <!-- Recoverable parse result: no roles were found, so let the user discard the Draft/file. -->
     <template if:true={isError}>
       <div class="centered-state">
         <p class="state-text">No work-experience roles were found. Try another file or check the résumé format.</p>
@@ -134,7 +161,6 @@
       </div>
     </template>
 
-    <!-- STEP 3: Done -->
     <template if:true={isDone}>
       <div class="banner banner_success" role="status">
         <lightning-icon icon-name="utility:success" size="x-small" variant="inverse" alternative-text="Success"></lightning-icon>
@@ -143,7 +169,6 @@
       <lightning-button variant="neutral" label="Parse another résumé" onclick={handleReset} class="full-width-btn"></lightning-button>
     </template>
 
-    <!-- Read-only field-mapping disclosure (CMDT-driven; collapsed by default) -->
     <template if:true={hasFieldMap}>
       <div class="section fieldmap">
         <button type="button" class="fieldmap-toggle" onclick={handleToggleFieldMap} aria-expanded={showFieldMap}>
@@ -151,25 +176,37 @@
           <span>{fieldMapToggleLabel}</span>
         </button>
         <template if:true={showFieldMap}>
-          <p class="fieldmap-hint">Where each parsed value is saved — configured in the <strong>Resume Field Map</strong> custom metadata type (Setup → Custom Metadata Types). Change it there, no code required.</p>
-          <table class="fieldmap-table">
-            <thead>
-              <tr><th>Parse Key</th><th>Target</th><th>Type</th><th>Access</th></tr>
-            </thead>
-            <tbody>
-              <template for:each={fieldMapRows} for:item="row">
-                <tr key={row.id}>
-                  <td><code>{row.parseKey}</code></td>
-                  <td>{row.target}</td>
-                  <td>{row.type}</td>
-                  <td>{row.access}</td>
+          <p class="fieldmap-hint">Active candidate and role mappings are limited to direct fields on Resume Data and Work Experience. Invalid rows are shown here but ignored by prompt, review, and save.</p>
+          <div class="fieldmap-table-scroll" role="region" aria-label="Resume field mapping" tabindex="0">
+            <table class="fieldmap-table">
+              <colgroup>
+                <col class="fieldmap-col-key" />
+                <col class="fieldmap-col-target" />
+                <col class="fieldmap-col-type" />
+                <col class="fieldmap-col-access" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">Parse Key</th>
+                  <th scope="col">Target</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Access</th>
                 </tr>
-              </template>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                <template for:each={fieldMapRows} for:item="row">
+                  <tr key={row.id}>
+                    <td class="fieldmap-key"><code>{row.parseKey}</code></td>
+                    <td class="fieldmap-target">{row.target}</td>
+                    <td class="fieldmap-type">{row.type}</td>
+                    <td class="fieldmap-access"><span class="fieldmap-status">{row.access}</span></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
         </template>
       </div>
     </template>
-
   </div>
 </template>

@@ -6,7 +6,8 @@
 #   1. the unlocked FULL-APP package (objects, Apex, wizard LWC + custom Lightning type,
 #      GenAI prompt template, GenAiFunction, flows, permission sets) — GenAI metadata
 #      packages fine in 2GP with packageMetadataAccess + an Einstein-enabled scratch def
-#   2. the Agentforce agent (publish + exact-version activate) — see deploy-agent.sh
+#   2. the Agentforce agent (publish + exact-version activate + idempotent post-publish
+#      permission-set access grant) — see deploy-agent.sh and grant-agent-access.sh.
 #      The agent installs separately because it is an Agent Script agent, which the platform
 #      cannot package (sf agent generate template doesn't support Agent Script agents).
 #
@@ -53,10 +54,17 @@ Remaining one-time manual steps (platform can't automate these):
     If needed, configure the supported employee-agent panel/channel for your org and release.
   • Add the "Resume Data" related list to the Contact page layout
       Setup → Object Manager → Contact → Page Layouts → (your layout) → Related Lists
-  • Grant agent access (the agent isn't in the package, so the packaged permset can't
-    reference it). Add to the Resume Parser User permission set, then re-assign:
-      <agentAccesses><agentName>Resume_Parser_Agent</agentName><enabled>true</enabled></agentAccesses>
-  • Assign "Resume Parser User" to your end users.
+  • Agent access is reconciled idempotently after publication by deploy-agent.sh because the
+    packaged permission set cannot reference an agent that does not exist yet. If you publish
+    separately, run: ./grant-agent-access.sh <target-org>
+  • Assign "Resume Parser User" to your end users. Existing assignments automatically inherit
+    the post-publish agent-access update.
+  • Candidate Website field/FLS/layout ship without a CMDT mapping so the recommended post-release
+    admin smoke video can create exactly one mapping. For it and future résumé fields: grant FLS, create one
+    compatible active field-map row with an extraction hint and optional type-compatible Default
+    Value only when blank output should be defaulted, then close/reopen the wizard to refresh its
+    cache. After a mapping exists, edit it—never duplicate its target. See
+    DYNAMIC_FIELD_ADMIN_UAT.md for the post-release smoke checklist and failure-reporting guidance.
 
 Then open the Agentforce panel and say: "I want to add a resume."
 DONE

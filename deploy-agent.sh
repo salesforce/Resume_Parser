@@ -71,16 +71,28 @@ sf agent activate \
   --version "$PUBLISHED_VERSION" \
   --target-org "$ORG"
 
+# The permission set ships in the package before the Agent Script agent exists, so it cannot carry
+# this dependency in package/source metadata. Reconcile the exact agent access after publication;
+# the helper retrieves the target permission set first and changes only this access row.
+echo "▸ Reconciling post-publish agent access ..."
+"$HERE/grant-agent-access.sh" "$ORG"
+
 cat <<DONE
 
-✓ Agent published and exact version v${PUBLISHED_VERSION} activated.
+✓ Agent published, exact version v${PUBLISHED_VERSION} activated, and Resume Parser User agent access verified.
 
 Manual Setup verification (required):
   1. In Setup, open Agentforce Agents and select Resume Parser Agent.
   2. Confirm version v${PUBLISHED_VERSION} is Active.
-  3. Verify the agent is available in the Lightning Agentforce panel your users will use.
+  3. Verify the agent is selectable in the Lightning Agentforce panel your users use.
      If that panel surface isn't available, configure it through the supported Agentforce Setup UI
      for your org/release. Do not edit or redeploy generated agent metadata.
-  4. Grant Resume_Parser_Agent access in the Resume Parser User permission set and assign the set
-     to the intended users.
+  4. Assign Resume Parser User to the intended users; existing assignments inherit the verified
+     agent-access update without being recreated.
+  5. Candidate Website field/FLS/layout ship without a CMDT mapping for the recommended post-release
+     admin smoke test. Create exactly one compatible hinted mapping (and optional compatible Default
+     Value when intended),
+     then close/reopen the wizard so its cache reloads. For future fields, grant FLS and follow
+     the same one-target/one-map flow; once a mapping
+     exists, edit it instead of adding a duplicate. See DYNAMIC_FIELD_ADMIN_UAT.md.
 DONE

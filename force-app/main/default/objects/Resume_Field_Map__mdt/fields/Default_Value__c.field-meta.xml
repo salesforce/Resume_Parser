@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Default_Value__c</fullName>
+    <label>Default Value</label>
+    <type>Text</type>
+    <description>Optional generic fallback applied only when the model returns blank. The value must be compatible with Data Type and the described target field; invalid defaults make the mapping inert.</description>
+    <length>255</length>
+    <required>false</required>
+</CustomField>

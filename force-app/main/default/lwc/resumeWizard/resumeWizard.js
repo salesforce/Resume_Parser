@@ -10,11 +10,14 @@ import uploadAndParse from '@salesforce/apex/ResumeWizardController.uploadAndPar
 import commitDrafts from '@salesforce/apex/ResumeWizardController.commitDrafts';
 import abandonDraft from '@salesforce/apex/ResumeWizardController.abandonDraft';
 import getFieldMap from '@salesforce/apex/ResumeWizardController.getFieldMap';
+import {
+  buildDisclosureRows,
+  buildRoleTableColumns,
+  flattenRoleRows,
+  updateFieldValue,
+  visibleFields
+} from './dynamicFields';
 
-/* ── CLT value envelope unwrap (matches the fileUpload CLT pattern) ──
-   The agent passes a config JSON (title, subtitle, contactId) wrapped in an Apex envelope
-   field. We use it for the display labels and to pre-select the Contact; the wizard is
-   otherwise self-driving via Apex regardless of config. */
 const ENVELOPE_FIELD = 'resumeWizardJSON';
 function peelValueWrapper(parsed) {
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -35,21 +38,7 @@ function unwrapEnvelope(raw) {
   return null;
 }
 
-const EMPLOYMENT_TYPE_OPTIONS = [
-  'Full-time', 'Part-time', 'Contract', 'Internship', 'Temporary', 'Freelance', 'Other'
-].map((t) => ({ label: t, value: t }));
-
 const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg'];
-
-const TABLE_COLUMNS = [
-  { label: 'Company', fieldName: 'company' },
-  { label: 'Title', fieldName: 'title' },
-  { label: 'Start', fieldName: 'startDate', type: 'date-local',
-    typeAttributes: { month: '2-digit', day: '2-digit', year: 'numeric' } },
-  { label: 'End', fieldName: 'endDate', type: 'date-local',
-    typeAttributes: { month: '2-digit', day: '2-digit', year: 'numeric' } },
-  { label: 'Type', fieldName: 'employmentType' }
-];
 
 export default class ResumeWizard extends LightningElement {
   _value;
@@ -57,44 +46,50 @@ export default class ResumeWizard extends LightningElement {
   get value() { return this._value; }
   set value(v) {
     this._value = unwrapEnvelope(v);
-    // The CLT value can arrive after connectedCallback; pre-fill the Contact when it does.
     this.prefillContact();
   }
 
-  // step: upload | parsing | preview | committing | done | error
   @track step = 'upload';
   @track errorMessage = '';
-
-  // Contact context: auto-populated when the agent/CLT is opened on a Contact record page.
   @api recordId;
   @track selectedContactId;
-
-  // upload state
   _file;
   fileName = '';
 
-  // Read-only CMDT field-map disclosure ("How fields map").
+  // The map is both disclosure and runtime UI schema. Loading fails closed.
   @track fieldMap = [];
+  fieldMapState = 'loading';
   @track showFieldMap = false;
+
+  // Generic review envelopes returned by Apex.
+  resumeDataId;
+  @track candidateFields = [];
+  @track drafts = [];
+  @track activeIndex = 0;
+  savedCount = 0;
 
   connectedCallback() {
     this.prefillContact();
     this.loadFieldMap();
   }
 
-  // Load the active Resume_Field_Map__mdt rows for the disclosure. Fails quietly — the field map
-  // is informational, so any error just leaves the section hidden and never breaks the wizard.
-  loadFieldMap() {
-    getFieldMap()
-      .then((rows) => { this.fieldMap = rows || []; })
-      .catch(() => { this.fieldMap = []; });
+  async loadFieldMap() {
+    this.fieldMapState = 'loading';
+    try {
+      const rows = await getFieldMap();
+      if (!rows || !rows.some((row) => row.supported === true)) {
+        throw new Error('No supported active mappings were returned.');
+      }
+      this.fieldMap = rows;
+      this.fieldMapState = 'ready';
+    } catch {
+      this.fieldMap = [];
+      this.fieldMapState = 'error';
+    }
   }
 
   handleToggleFieldMap() { this.showFieldMap = !this.showFieldMap; }
 
-  // Pre-fill the Contact picker from (1) the agent-supplied contactId in the CLT config, or
-  // (2) the host record-page id when embedded on a Contact page. The agent resolves/confirms
-  // the Contact conversationally and passes its Id in the Details JSON (config.contactId).
   prefillContact() {
     const fromConfig = this._value && this._value.contactId;
     if (fromConfig && String(fromConfig).startsWith('003')) {
@@ -104,33 +99,21 @@ export default class ResumeWizard extends LightningElement {
     }
   }
 
-  // parse/preview state
-  resumeDataId;
-  @track candidate = { candidateName: '', candidateEmail: '', candidatePhone: '', summary: '' };
-  @track drafts = [];
-  @track activeIndex = 0;
-  savedCount = 0;
-
-  employmentTypeOptions = EMPLOYMENT_TYPE_OPTIONS;
-  tableColumns = TABLE_COLUMNS;
-
-  // ── display getters (config-driven labels with sensible defaults) ──
+  // ── Display state ──
   get title() { return this._value?.title || 'Résumé Parser'; }
   get subtitle() { return this._value?.subtitle || 'Upload a résumé, review the parsed work history, then save.'; }
-
-  get isUpload()   { return this.step === 'upload'; }
-  get isParsing()  { return this.step === 'parsing'; }
-  get isPreview()  { return this.step === 'preview'; }
-  get isCommitting(){ return this.step === 'committing'; }
-  get isDone()     { return this.step === 'done'; }
-  get isError()    { return this.step === 'error'; }
-
+  get isUpload() { return this.step === 'upload'; }
+  get isParsing() { return this.step === 'parsing'; }
+  get isPreview() { return this.step === 'preview'; }
+  get isCommitting() { return this.step === 'committing'; }
+  get isDone() { return this.step === 'done'; }
+  get isError() { return this.step === 'error'; }
   get hasDrafts() { return this.drafts.length > 0; }
   get roleCount() { return this.drafts.length; }
   get pagerLabel() { return `Role ${this.activeIndex + 1} of ${this.drafts.length}`; }
   get atFirst() { return this.activeIndex <= 0; }
   get atLast() { return this.activeIndex >= this.drafts.length - 1; }
-  get activeDraft() { return this.drafts[this.activeIndex] || {}; }
+  get activeDraft() { return this.drafts[this.activeIndex] || { fields: [] }; }
   get confirmLabel() {
     return `Save ${this.drafts.length} work experience${this.drafts.length === 1 ? '' : 's'}`;
   }
@@ -138,33 +121,27 @@ export default class ResumeWizard extends LightningElement {
     return `Saved ${this.savedCount} work experience record${this.savedCount === 1 ? '' : 's'}.`;
   }
 
-  // table rows need a key; map drafts → display rows
-  get tableRows() {
-    return this.drafts.map((d) => ({ ...d, id: d.rowId }));
-  }
+  get fieldMapReady() { return this.fieldMapState === 'ready'; }
+  get isFieldMapLoading() { return this.fieldMapState === 'loading'; }
+  get isFieldMapError() { return this.fieldMapState === 'error'; }
+  get visibleCandidateFields() { return visibleFields(this.candidateFields); }
+  get activeDraftFields() { return visibleFields(this.activeDraft.fields); }
+  get hasVisibleCandidateFields() { return this.visibleCandidateFields.length > 0; }
+  get hasVisibleRoleFields() { return this.activeDraftFields.length > 0; }
+  get tableColumns() { return buildRoleTableColumns(this.fieldMap); }
+  get hasVisibleRoleTableFields() { return this.tableColumns.length > 0; }
+  get tableRows() { return flattenRoleRows(this.drafts); }
 
-  // ── Field-map disclosure getters ──
   get hasFieldMap() { return (this.fieldMap || []).length > 0; }
   get fieldMapToggleLabel() { return this.showFieldMap ? 'Hide field mapping' : 'How fields map'; }
   get fieldMapToggleIcon() { return this.showFieldMap ? 'utility:chevrondown' : 'utility:chevronright'; }
-  get fieldMapRows() {
-    return (this.fieldMap || []).map((m, i) => ({
-      id: `${m.parseKey}-${i}`,
-      parseKey: m.parseKey,
-      // "Object · Field label" (fall back to the API name when no label resolved)
-      target: `${m.targetObject || ''}${m.targetField ? ' · ' + (m.targetLabel || m.targetField) : ''}`,
-      type: m.dataType,
-      access: m.readOnly ? 'Read-only' : (m.showInReview ? 'Editable' : 'Hidden')
-    }));
-  }
+  get fieldMapRows() { return buildDisclosureRows(this.fieldMap); }
 
-  // can only upload once a Contact and a file are both chosen
   get canUpload() { return !!this.selectedContactId && !!this._file; }
-  get uploadDisabled() { return !this.canUpload; }
+  get uploadDisabled() { return !this.canUpload || !this.fieldMapReady; }
 
-  // ── Upload step ──
+  // ── Upload ──
   handleContactChange(event) {
-    // lightning-record-picker fires onchange with detail.recordId (null when cleared)
     this.selectedContactId = event.detail ? event.detail.recordId : null;
     this.errorMessage = '';
   }
@@ -191,19 +168,26 @@ export default class ResumeWizard extends LightningElement {
       this.errorMessage = 'Please choose a résumé file first.';
       return;
     }
+    if (!this.fieldMapReady) {
+      this.errorMessage = 'The review configuration is not ready. Refresh the wizard and try again.';
+      return;
+    }
     this.errorMessage = '';
     this.step = 'parsing';
     try {
       const base64Data = await this.readAsBase64(this._file);
-      const result = await uploadAndParse({ fileName: this._file.name, base64Data, contactId: this.selectedContactId });
+      const result = await uploadAndParse({
+        fileName: this._file.name,
+        base64Data,
+        contactId: this.selectedContactId
+      });
       this.resumeDataId = result.resumeDataId;
-      this.candidate = {
-        candidateName: result.candidateName || '',
-        candidateEmail: result.candidateEmail || '',
-        candidatePhone: result.candidatePhone || '',
-        summary: result.summary || ''
-      };
-      this.drafts = (result.workExperiences || []).map((d, i) => ({ ...d, rowId: d.rowId || `row-${i}` }));
+      this.candidateFields = result.candidateFields || [];
+      this.drafts = (result.workExperiences || []).map((row, index) => ({
+        ...row,
+        rowId: row.rowId || `row-${index}`,
+        fields: row.fields || []
+      }));
       this.activeIndex = 0;
       this.step = this.drafts.length ? 'preview' : 'error';
       if (!this.drafts.length) {
@@ -215,68 +199,54 @@ export default class ResumeWizard extends LightningElement {
     }
   }
 
-  // ── Preview step: pager ──
+  // ── Generic review editing ──
   handlePrev() { if (!this.atFirst) this.activeIndex -= 1; }
   handleNext() { if (!this.atLast) this.activeIndex += 1; }
 
   handleRowSelect(event) {
     const id = event.detail?.row?.id || event.currentTarget?.dataset?.id;
-    const idx = this.drafts.findIndex((d) => d.rowId === id);
-    if (idx >= 0) this.activeIndex = idx;
+    const index = this.drafts.findIndex((row) => row.rowId === id);
+    if (index >= 0) this.activeIndex = index;
   }
 
-  // ── Preview step: inline edits ──
+  eventValue(event) {
+    return event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+  }
+
   handleCandidateChange(event) {
-    const field = event.target.dataset.field;
-    this.candidate = { ...this.candidate, [field]: event.target.value };
+    this.candidateFields = updateFieldValue(
+      this.candidateFields,
+      event.target.dataset.key,
+      this.eventValue(event)
+    );
   }
 
   handleDraftChange(event) {
-    const field = event.target.dataset.field;
-    const value = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
     const next = [...this.drafts];
-    next[this.activeIndex] = { ...next[this.activeIndex], [field]: value };
+    const active = next[this.activeIndex];
+    next[this.activeIndex] = {
+      ...active,
+      fields: updateFieldValue(active.fields, event.target.dataset.key, this.eventValue(event))
+    };
     this.drafts = next;
   }
 
   handleRemoveRole() {
-    const next = this.drafts.filter((_, i) => i !== this.activeIndex);
+    const next = this.drafts.filter((_, index) => index !== this.activeIndex);
     this.drafts = next;
     if (this.activeIndex >= next.length) this.activeIndex = Math.max(0, next.length - 1);
-    if (next.length === 0) {
-      this.errorMessage = 'All roles removed. Re-upload a résumé to start over.';
-    }
+    if (next.length === 0) this.errorMessage = 'All roles removed. Re-upload a résumé to start over.';
   }
 
-  // ── Commit step ──
+  // ── Commit ──
   async handleConfirm() {
     this.errorMessage = '';
     this.step = 'committing';
     try {
-      const rows = this.drafts.map((d) => ({
-        rowId: d.rowId,
-        company: d.company,
-        title: d.title,
-        startDate: d.startDate,
-        endDate: d.endDate,
-        isCurrent: d.isCurrent === true,
-        location: d.location,
-        employmentType: d.employmentType,
-        description: d.description
-      }));
-      // Include the user's candidate-level edits so they persist too (name/email/phone/summary).
-      const candidate = {
-        candidateName: this.candidate.candidateName,
-        candidateEmail: this.candidate.candidateEmail,
-        candidatePhone: this.candidate.candidatePhone,
-        summary: this.candidate.summary
-      };
-      // Pass as JSON strings — a List<InnerClass>/object Apex param loses field values across the
-      // LWC→Apex binding; the controller JSON.deserializes these back into typed drafts.
       this.savedCount = await commitDrafts({
         resumeDataId: this.resumeDataId,
-        rowsJson: JSON.stringify(rows),
-        candidateJson: JSON.stringify(candidate)
+        rowsJson: JSON.stringify(this.drafts),
+        candidateJson: JSON.stringify(this.candidateFields)
       });
       this.step = 'done';
     } catch (err) {
@@ -286,9 +256,6 @@ export default class ResumeWizard extends LightningElement {
   }
 
   async handleReset() {
-    // Preview data already has a persisted Draft parent + uploaded file. Remove both before
-    // starting over so Re-upload doesn't leave abandoned temporary records. A successful resume
-    // is preserved; abandonDraft is intentionally a no-op for Success status.
     if (this.resumeDataId) {
       try {
         await abandonDraft({ resumeDataId: this.resumeDataId });
@@ -297,22 +264,19 @@ export default class ResumeWizard extends LightningElement {
         return;
       }
     }
-
     this._file = undefined;
     this.fileName = '';
     this.resumeDataId = undefined;
-    this.candidate = { candidateName: '', candidateEmail: '', candidatePhone: '', summary: '' };
+    this.candidateFields = [];
     this.drafts = [];
     this.activeIndex = 0;
     this.savedCount = 0;
     this.errorMessage = '';
-    // Re-apply the pre-filled Contact (from config or page context) for the next résumé.
     this.selectedContactId = null;
     this.prefillContact();
     this.step = 'upload';
   }
 
-  // ── helpers ──
   readAsBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();

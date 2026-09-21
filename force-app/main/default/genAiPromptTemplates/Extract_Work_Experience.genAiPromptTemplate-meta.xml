@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <GenAiPromptTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
     <activeVersionIdentifier>zU0ZnIjRHVBItSg8zIKqjekLSYllkuKsTO5ZqqkxAqY=_1</activeVersionIdentifier>
-    <description>Extracts candidate info and work history from an uploaded resume file as strict JSON. The prompt schema for supported typed wire keys is built from active Resume_Field_Map__mdt rows and injected via ExtraInstructions.</description>
+    <description>Extracts candidate info and work history as strict JSON. The schema, hints, allowed values, and optional blank defaults come from validated active Resume_Field_Map__mdt rows.</description>
     <developerName>Extract_Work_Experience</developerName>
     <masterLabel>Extract Work Experience</masterLabel>
     <overridable>false</overridable>
