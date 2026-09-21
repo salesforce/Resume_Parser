@@ -59,12 +59,11 @@ Remaining one-time manual steps (platform can't automate these):
     separately, run: ./grant-agent-access.sh <target-org>
   • Assign "Resume Parser User" to your end users. Existing assignments automatically inherit
     the post-publish agent-access update.
-  • Candidate Website field/FLS/layout ship without a CMDT mapping so the recommended post-release
-    admin smoke video can create exactly one mapping. For it and future résumé fields: grant FLS, create one
-    compatible active field-map row with an extraction hint and optional type-compatible Default
-    Value only when blank output should be defaulted, then close/reopen the wizard to refresh its
-    cache. After a mapping exists, edit it—never duplicate its target. See
-    DYNAMIC_FIELD_ADMIN_UAT.md for the post-release smoke checklist and failure-reporting guidance.
+  • Candidate Website field/FLS/layout ship without a CMDT mapping. To enable it—or add a future
+    supported résumé field—grant FLS, create exactly one compatible active mapping with an
+    extraction hint and optional type-compatible Default Value, then close/reopen the wizard to
+    refresh its cache. Confirm the mapping disclosure before use; edit an existing target mapping
+    instead of adding a duplicate.
 
 Then open the Agentforce panel and say: "I want to add a resume."
 DONE

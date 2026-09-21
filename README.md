@@ -234,11 +234,9 @@ non-production org. An `Ignored:` issue is fail-closed, not a partial write; cor
 then reopen. New objects, relationship paths, or unsupported widgets require reviewed source changes.
 
 The `Candidate_Website__c` field, layout placement, and Resume Parser User FLS ship in source, but its CMDT
-mapping is intentionally created by the post-release admin smoke test instead of packaged. Create exactly
-one Candidate Website mapping after install; after it exists, edit that row rather than adding a duplicate.
-The same one-field/one-map rule applies to future `Candidate_Linkedin__c`-style fields. The recommended
-post-release video script, checklist, and failure-reporting guidance are in
-[`DYNAMIC_FIELD_ADMIN_UAT.md`](DYNAMIC_FIELD_ADMIN_UAT.md); this smoke test does not block source push.
+mapping is intentionally not packaged. To enable Website extraction, create exactly one compatible mapping
+after install using the workflow above; after it exists, edit that row rather than adding a duplicate. The
+same one-field/one-map rule applies to future `Candidate_Linkedin__c`-style fields.
 
 | CMDT Data Type | Compatible described target type |
 |---|---|

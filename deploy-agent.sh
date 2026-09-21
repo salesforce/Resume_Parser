@@ -89,10 +89,8 @@ Manual Setup verification (required):
      for your org/release. Do not edit or redeploy generated agent metadata.
   4. Assign Resume Parser User to the intended users; existing assignments inherit the verified
      agent-access update without being recreated.
-  5. Candidate Website field/FLS/layout ship without a CMDT mapping for the recommended post-release
-     admin smoke test. Create exactly one compatible hinted mapping (and optional compatible Default
-     Value when intended),
-     then close/reopen the wizard so its cache reloads. For future fields, grant FLS and follow
-     the same one-target/one-map flow; once a mapping
-     exists, edit it instead of adding a duplicate. See DYNAMIC_FIELD_ADMIN_UAT.md.
+  5. Candidate Website field/FLS/layout ship without a CMDT mapping. To enable it—or add a
+     future supported field—grant FLS, create exactly one compatible mapping with a hint and
+     optional Default Value, then close/reopen the wizard and confirm disclosure. Edit an existing
+     target mapping instead of adding a duplicate.
 DONE
