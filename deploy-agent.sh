@@ -2,6 +2,11 @@
 #
 # Publish and activate the Résumé Parser Agentforce agent.
 #
+# This script changes only the separate agent and its post-publish access; it does not install or
+# upgrade the app runtime. Released package 3.2.1-1 retains older hardcoded-schema behavior. The
+# bounded generic CMDT runtime is current 3.3.0.NEXT force-app source and is not yet a newly
+# built/promoted package.
+#
 # Publishing runs in a temporary DX project. Salesforce CLI retrieves the generated metadata into
 # that temporary directory so this script can read the exact version it created; the files are never
 # edited, redeployed, or written into the source checkout.
@@ -81,6 +86,12 @@ cat <<DONE
 
 ✓ Agent published, exact version v${PUBLISHED_VERSION} activated, and Resume Parser User agent access verified.
 
+App distribution reminder:
+  • This agent operation did not upgrade the installed app layer.
+  • Released package 3.2.1-1 retains older hardcoded-schema behavior.
+  • The bounded generic CMDT runtime requires a 3.3.0.NEXT source deploy or a future package built,
+    validated, and promoted from that source.
+
 Manual Setup verification (required):
   1. In Setup, open Agentforce Agents and select Resume Parser Agent.
   2. Confirm version v${PUBLISHED_VERSION} is Active.
@@ -89,8 +100,8 @@ Manual Setup verification (required):
      for your org/release. Do not edit or redeploy generated agent metadata.
   4. Assign Resume Parser User to the intended users; existing assignments inherit the verified
      agent-access update without being recreated.
-  5. Candidate Website field/FLS/layout ship without a CMDT mapping. To enable it—or add a
-     future supported field—grant FLS, create exactly one compatible mapping with a hint and
-     optional Default Value, then close/reopen the wizard and confirm disclosure. Edit an existing
-     target mapping instead of adding a duplicate.
+  5. Current 3.3.0.NEXT source only: Candidate Website field/FLS/layout ship without a mapping.
+     After a 3.3 source deploy—or a future package built/promoted from it—grant FLS, create exactly
+     one compatible mapping with a hint and optional Default Value, then close/reopen the wizard
+     and confirm disclosure. Released package 3.2.1-1 does not include this generic workflow.
 DONE

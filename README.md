@@ -1,8 +1,10 @@
 # Résumé Parser for Salesforce
 
-A Salesforce reference implementation with a production-installable released package that turns an
-uploaded résumé into structured **Work Experience** records under a **Contact** — through an in-chat
-Agentforce wizard that lets the user review and edit extracted fields before work-history rows are saved.
+A Salesforce reference implementation that turns an uploaded résumé into structured **Work Experience**
+records under a **Contact** through an in-chat Agentforce wizard. The current public distributions differ:
+released package **3.2.1-1** is production-installable but retains its older hardcoded extraction schema;
+current source **3.3.0.NEXT** contains the bounded generic CMDT runtime but has not been built and promoted
+as a new production-installable package.
 
 [![Salesforce API](https://img.shields.io/badge/Salesforce%20API-v66.0-blue)](https://developer.salesforce.com/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt)
@@ -37,17 +39,25 @@ the candidate. Recommitting the same Draft replaces its role children rather tha
   `GetRecordDetails` find and enrich the Contact; Apex is reserved for JSON coercion and the
   idempotent write.
 - **Draft-then-confirm** — upload creates a temporary Draft résumé and stores its file so the prompt
-  can parse it. Work-experience children are written only after approval. Re-upload removes the current
-  temporary draft and file; closing the session can leave a Draft record for an administrator to review.
+  can parse it. Work-experience children are written only after approval. In current 3.3.0.NEXT source,
+  parse failure and Re-upload remove the temporary Draft/file; released package 3.2.1-1 predates that
+  cleanup and can retain them. Closing either distribution can leave a Draft for administrator review.
 
 ---
 
 ## 🚀 Install
 
-The solution installs in two parts: an **unlocked package** (objects, Apex, wizard LWC + custom
-Lightning type, prompt template, flow, permission set) and the **Agent Script agent**, which can't be
-packaged (see [below](#whats-in-the-package-vs-the-agent-step)) and deploys from this repo's `agent/`
-source via a script. Follow the steps in order — a brand-new machine starts at step 0.
+Choose the app distribution first, then install the separate Agent Script agent:
+
+- **Released package 3.2.1-1 (`04tHu000004hhiJIAQ`)** — code-coverage validated, promoted to Released,
+  and production-installable. It retains the older hardcoded extraction schema; installing it does **not**
+  install the bounded generic CMDT runtime described under [Versions](#versions).
+- **Current source 3.3.0.NEXT** — contains the bounded generic CMDT runtime and can be deployed from
+  `force-app/` to an appropriately enabled non-production org. It is not a newly built/promoted package.
+  Build, validate, and promote a new package version before using this source as a production package.
+
+The **Agent Script agent** can't be packaged (see [below](#whats-in-the-package-vs-the-agent-step)) and
+publishes separately from `agent/`. Publishing the agent never upgrades the selected app distribution.
 
 ### 0. Prerequisites (one-time, per machine)
 
@@ -78,24 +88,44 @@ sf org list                            # confirm "my-org" is listed
 login globally on your machine, so you run the scripts from the cloned repo folder but they act on
 whatever org you pass via `<your-org>` — the folder isn't tied to any org.
 
-### 3. Install everything (one command, run from the repo root)
+### 3. Install everything (choose one app track)
+
+#### Track A — released package 3.2.1-1 (production-installable, older schema)
 
 ```bash
 ./install.sh <your-org> 04tHu000004hhiJIAQ
 ```
 
-This runs the three steps below in order. To run them individually instead:
+#### Track B — current source 3.3.0.NEXT (generic runtime, not a promoted package)
+
+Use the no-package-ID source-deploy path only in an appropriately enabled non-production org:
 
 ```bash
-# 3a. Install the unlocked package
+./install.sh <your-non-production-org>
+```
+
+For production, first build, validate, and promote a new package version from this exact source, then
+install that resulting package ID rather than deploying `force-app/` directly:
+
+```bash
+./install.sh <your-production-org> <new-promoted-04t-package-version-id>
+```
+
+The script runs the selected app track, publishes the separate agent, reconciles Agent Access, and assigns
+the permission set. To run those steps individually:
+
+```bash
+# Track A app: released 3.2.1-1 package (older hardcoded extraction schema)
 sf package install --package 04tHu000004hhiJIAQ --target-org <your-org> \
   --apex-compile package --wait 20 --no-prompt
 
-# 3b. Deploy + publish the agent, activate the exact version just created,
-#     then idempotently grant that agent in the existing permission set
+# Track B app: current 3.3.0.NEXT source (bounded generic CMDT runtime)
+sf project deploy start --source-dir force-app --target-org <your-org>
+
+# Both tracks: publish the separate agent and reconcile its access
 ./deploy-agent.sh <your-org>
 
-# 3c. Assign the permission set (existing assignments inherit the access update)
+# Assign the permission set (existing assignments inherit the access update)
 sf org assign permset --name "Resume_Parser_User" --target-org <your-org>
 ```
 
@@ -127,7 +157,12 @@ Contact, confirms it, and opens the upload wizard in the chat.
 
 ---
 
-**Package version:** `Resume Parser@3.2.1-1` → `04tHu000004hhiJIAQ` (code-coverage validated, **promoted to Released** — installs in production). This released package predates the unreleased 3.3 source's temporary Draft/file cleanup. Orgs installing 3.2.1 should include unconfirmed Drafts/files in their retention process; source deployments receive the 3.3 behavior described above. As an alternative to the CLI in step 3a, install the package via a browser URL — then continue from step 3b:
+**Current released package:** `Resume Parser@3.2.1-1` → `04tHu000004hhiJIAQ` is code-coverage
+validated, promoted to Released, and installs in production. It retains the older hardcoded extraction
+schema and predates 3.3 source cleanup; it does **not** contain the bounded generic CMDT runtime. Orgs
+installing 3.2.1 should include unconfirmed Drafts/files in their retention process. As an alternative
+to the Track A CLI command, install that package via a browser URL, then continue with the separate agent
+step:
 
 ```
 Developer / Sandbox: https://test.salesforce.com/packaging/installPackage.apexp?p0=04tHu000004hhiJIAQ
@@ -156,10 +191,11 @@ permission set stays agent-independent so an initial package install cannot fail
 exists. Panel availability is then verified/configured through supported Setup UI; the script never edits
 generated Bot or planner metadata.
 
-| Layer | Path | Installs via |
+| Distribution layer | Capability | Installs via |
 |---|---|---|
-| **Full app** (objects, Apex, LWC, CLT, prompt template, GenAiFunction, flows, permission set) | `force-app/` | unlocked package `04tHu000004hhiJIAQ` |
-| **Agent** (Agent Script) + post-publish access | `agent/`, `grant-agent-access.sh` | `deploy-agent.sh` (`sf agent publish/activate`, then idempotent permission-set access grant) |
+| **Released app package 3.2.1-1** | Production-installable full app with the older hardcoded extraction schema | unlocked package `04tHu000004hhiJIAQ` |
+| **Current app source 3.3.0.NEXT** | Bounded generic CMDT runtime; source-deployable and non-production validated, but not yet a new Released package | `force-app/` source deploy, or a newly built/validated/promoted package created by the adopter |
+| **Agent** (Agent Script) + post-publish access | Separate from either app distribution; does not upgrade app runtime | `agent/`, `grant-agent-access.sh` via `deploy-agent.sh` |
 
 For the deeper architecture (diagrams, decisions, data model), see
 [`RESUME_PARSER_ARCHITECTURE.md`](RESUME_PARSER_ARCHITECTURE.md).
@@ -175,12 +211,20 @@ For the deeper architecture (diagrams, decisions, data model), see
 
 ## Verified
 
-- Full-app package `04tHu000004hhiJIAQ` **builds code-coverage validated (89%) and is promoted to
-  Released** — it installs in production as well as sandbox/dev. Components: objects, the
-  `Resume_Field_Map__mdt` custom metadata type + records, the required `Contact__c` lookup, Apex,
-  `resumeWizard` LWC, `resumeWizard` custom Lightning type, `Extract_Work_Experience` prompt template,
-  `resumeWizard_Output` GenAiFunction + flow, and the single `Resume Parser User` permission set.
-- **`ResumeWizardController` Apex tests pass (19/19) in the build's validation org.**
+### Released package 3.2.1-1
+
+- `04tHu000004hhiJIAQ` is code-coverage validated (89%), promoted to Released, and installable in
+  production or non-production orgs.
+- Its validation build passed `ResumeWizardController` tests 19/19.
+- It includes the full app components available at 3.2.1, but its extraction schema remains hardcoded;
+  it does not include the bounded generic 3.3 runtime, generic defaults, or current source-only fields.
+
+### Current source 3.3.0.NEXT
+
+- The bounded generic CMDT runtime has passed full source check/deploy validation and focused Apex 22/22
+  in appropriately enabled non-production orgs.
+- It has **not** been built and promoted as a package version. A source checkout or source deployment is
+  not a production-installable Released package.
 
 ## Manual steps the platform can't automate
 
@@ -193,9 +237,10 @@ For the deeper architecture (diagrams, decisions, data model), see
 
 ## Notes
 
-- Committing the same Draft résumé replaces its work-experience children rather than appending them.
-  Re-upload removes the current temporary Draft/file before starting over. If a user closes the session
-  instead, an unconfirmed Draft can remain and should be handled by the adopting org's retention policy.
+- In current 3.3.0.NEXT source, committing the same Draft résumé replaces its work-experience children;
+  parse failure and Re-upload remove the current temporary Draft/file. Released package 3.2.1-1 predates
+  that cleanup. In either distribution, closing the session can leave an unconfirmed Draft that the
+  adopting org should handle through its retention policy.
 - Supported file types: `.pdf`, `.png`, `.jpg` (`.jpeg` is unreliable for vision — convert to `.jpg`).
 
 ## Versions
@@ -233,10 +278,11 @@ confirm **How fields map** reports Editable and test hint-driven extraction, rev
 non-production org. An `Ignored:` issue is fail-closed, not a partial write; correct the configuration/FLS,
 then reopen. New objects, relationship paths, or unsupported widgets require reviewed source changes.
 
-The `Candidate_Website__c` field, layout placement, and Resume Parser User FLS ship in source, but its CMDT
-mapping is intentionally not packaged. To enable Website extraction, create exactly one compatible mapping
-after install using the workflow above; after it exists, edit that row rather than adding a duplicate. The
-same one-field/one-map rule applies to future `Candidate_Linkedin__c`-style fields.
+The `Candidate_Website__c` field, layout placement, and Resume Parser User FLS are included only in current
+3.3 source; they are not in released package 3.2.1-1. Its CMDT mapping is intentionally absent from source.
+After deploying 3.3 source—or a future package built and promoted from it—create exactly one compatible
+Website mapping using the workflow above; later edit that row rather than adding a duplicate. The same
+one-field/one-map rule applies to future `Candidate_Linkedin__c`-style fields.
 
 | CMDT Data Type | Compatible described target type |
 |---|---|
@@ -265,8 +311,9 @@ and promote a new package version before treating those changes as production-in
 rebuild command below).
 
 **Last built / Released: `04tHu000004hhiJIAQ` (v3.2.1-1)** — code-coverage validated (89%) and
-**promoted to Released**, so it installs in **production** as well as sandbox/dev. This is the version
-to install today. Changes vs. 3.2.0: makes the agent **publishable on current Agentforce** — the
+**promoted to Released**, so it installs in **production** as well as sandbox/dev. This is the current
+production-installable package, but it does **not** install the bounded generic CMDT runtime. Changes vs.
+3.2.0: makes the agent **publishable on current Agentforce** — the
 resolved Contact Id is passed inside the wizard's `Details` JSON (the dedicated action-input approach in
 3.1.0/3.2.0 couldn't publish, since the genAiFunction only surfaces `Details`), and the now-unused
 `contactId` plumbing is removed from the flow and `ResumeWizardData`. Keeps the v3.2.0 "How fields map"

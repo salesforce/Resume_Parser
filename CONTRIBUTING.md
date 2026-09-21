@@ -32,7 +32,7 @@ Use the GitHub [Issues](https://github.com/salesforce/Resume_Parser/issues) page
 
 - [ ] Clean, modular, testable code with appropriate Apex test coverage.
 - [ ] `sf agent validate authoring-bundle` passes for any `.agent` change.
-- [ ] The package still builds: `sf package version create --definition-file config/project-scratch-def.json --code-coverage`.
+- [ ] The package still builds: `sf package version create --package "Resume Parser" --definition-file config/project-scratch-def.json --code-coverage` (promotion is a separate release-authorized step).
 - [ ] No customer-identifying data, credentials, or org IDs in committed files.
 
 # Creating a Pull Request

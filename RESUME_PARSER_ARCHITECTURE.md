@@ -2,6 +2,12 @@
 
 *For the implementation partner / SI evaluating, installing, and operating this component inside a Salesforce org. After reading, you will know what it does, how the pieces fit, how it installs, and what to plan for.*
 
+> **Distribution status.** This architecture describes current source **3.3.0.NEXT**, including the bounded
+> generic CMDT runtime. Current Released package **3.2.1-1** (`04tHu000004hhiJIAQ`) remains
+> production-installable but contains its older hardcoded extraction schema. The 3.3 source is validated for
+> source deployment in enabled non-production orgs; it is not a newly built/promoted package. Do not install
+> 3.2.1 expecting the generic runtime.
+
 ---
 
 ## 1. The 30-Second Summary
@@ -201,7 +207,7 @@ uses Full-time. Explicit unmatched nonblank labels use `Other`. The value remain
 
 ---
 
-## 6. Component Inventory
+## 6. Current Source 3.3.0.NEXT Component Inventory
 
 - **Schema:** `Resume_Data__c` (candidate fields, processing status, required `Contact__c` lookup), `Work_Experience__c` (role fields, required parent lookup, external key), `Resume_Field_Map__mdt` (the CMDT field map — one record per parsed field), tabs, and record layouts.
 - **AI layer:** `Extract_Work_Experience` — a Flex, vision prompt template grounded on the uploaded file, returning strict JSON. Its field schema is fully CMDT-driven (single v1 version, injected via `ExtraInstructions`); default model is **GPT-5 Mini** (`sfdc_ai__DefaultGPT5Mini`), swappable in the template.
@@ -228,48 +234,57 @@ uses Full-time. Explicit unmatched nonblank labels use `Other`. The value remain
 
 ---
 
-## 8. How It's Packaged & Installed
+## 8. How Package and Source Installation Differ
 
-Almost the entire solution ships as a single **unlocked package** — including the GenAI prompt template, the GenAiFunction, the custom Lightning type, and the Einstein-invoking Apex. The **one exception is the agent**: an Agent Script agent cannot be packaged, so it installs as a short source-deploy step.
+There are two app distributions, followed by the same separate Agent Script step:
 
 ```mermaid
 flowchart TD
-    subgraph PKG [Unlocked Package - one install]
-      OBJ[Objects + fields + tabs + layouts]
-      APX[Apex: controller, parsing, CLT type]
-      LWC[Wizard LWC + custom Lightning type]
-      PT[Prompt template + GenAiFunction + flow]
-      PS[Permission sets]
+    subgraph RELEASED [Released package 3.2.1-1]
+      OLD[Full app<br/>older hardcoded extraction schema]
     end
-    subgraph STEP [Post-package steps - agent cannot be packaged]
-      AGENT[Agent Script agent<br/>publish + activate]
+    subgraph SOURCE [Current source 3.3.0.NEXT]
+      GENERIC[Full app<br/>bounded generic CMDT runtime]
+    end
+    subgraph STEP [Separate agent step - agent cannot be packaged]
+      AGENT[Agent Script agent<br/>publish + exact-version activation]
       ACCESS[Idempotent post-publish access<br/>retrieve, validate, deploy, verify]
       AGENT --> ACCESS
     end
-    PKG --> STEP
-    PS --> ACCESS
+    OLD --> STEP
+    GENERIC --> STEP
     ACCESS --> LIVE([Selectable in the Agentforce panel])
 ```
 
-- **Package:** `sf package install` (objects, Apex, LWC, CLT, prompt template, GenAiFunction, flows, permission set). Requires `packageMetadataAccess` for the prompt template and an Einstein-enabled org.
-- **Agent:** deploy the authoring bundle, publish it, identify the newly created version, activate that exact version, then idempotently reconcile `Resume_Parser_Agent` access into the target's existing `Resume Parser User` set. `deploy-agent.sh` + `grant-agent-access.sh` automate supported metadata operations and never edit generated agent metadata. Panel availability is verified through supported UI.
-- **One command:** `install.sh <org> <packageVersionId>` runs package → agent → post-publish access → assignment in order.
+- **Released package 3.2.1-1:** install `04tHu000004hhiJIAQ` with `sf package install`. It is
+  code-coverage validated and promoted to Released, so it is production-installable, but it retains the
+  older hardcoded extraction schema and does not include current 3.3 generic-runtime fields/defaults.
+- **Current source 3.3.0.NEXT:** deploy `force-app/` to an appropriately enabled non-production org. It
+  contains the architecture described in §§4–7 and has passed full source deployment plus focused tests,
+  but no new package version has been built/promoted from it. Before production package installation,
+  build with code coverage, validate, and promote a new version from the exact source.
+- **Agent:** either app distribution still requires the separate authoring-bundle publication and narrow
+  post-publish Agent Access reconciliation. Publishing the agent does not upgrade the installed app runtime.
+- **Commands:** `install.sh <org> 04tHu000004hhiJIAQ` selects released 3.2.1; `install.sh <org>` selects
+  current 3.3 source deployment.
 
-> **Production note.** A production-installable package version requires a code-coverage–validated build that is then promoted to "Released." A beta (skip-validation) version installs in sandbox/Developer orgs only.
+> **Production note.** The only currently Released package is 3.2.1-1 with older schema behavior. Current
+> 3.3.0.NEXT source is not production-installable as a package until a new code-coverage–validated version is
+> built and promoted to Released.
 
 ---
 
 ## 9. What the Implementation Team Should Plan For
 
 1. **Agentforce enablement.** The org needs Agentforce/Einstein turned on and Flex credits available for the prompt-template invocations.
-2. **The agent is a separate install step.** Budget the `deploy-agent.sh` run (publish + exact-version activate + idempotent post-publish access grant) after the package install — it can't ride inside the package.
+2. **The agent is a separate install step.** Budget the `deploy-agent.sh` run after the selected app track (released 3.2.1 package or current 3.3 source deploy). It publishes/activates the agent and reconciles access, but does not change the app runtime.
 3. **Verify the intended panel surface.** In Setup, confirm the activated version is available in the Lightning Agentforce panel your users will use. Configure the supported employee-agent panel/channel for that org/release if needed; never edit generated agent metadata.
 4. **Grant agent access after publication.** Activating the agent does not make it visible to users, and the packaged/source `Resume Parser User` permission set intentionally has no pre-agent dependency. `deploy-agent.sh` calls `grant-agent-access.sh`, which retrieves the current target set, adds only enabled `Resume_Parser_Agent` access when absent, validates/deploys, and retrieves again to verify. The helper is idempotent, so later agent republishes reinforce access without changing package install order or generated metadata.
 5. **Add the related list to the Contact layout.** The package doesn't overwrite the standard Contact layout, so add the **Resume Data** related list in Object Manager.
 6. **Assign the `Resume Parser User` permission set** to end users — one assignment grants the app plus the separately reconciled agent access; existing assignments inherit the update.
 7. **File types.** `.pdf`, `.png`, `.jpg` are the documented inputs; validate the configured model with sanitized representative files in the target org.
-8. **Admin dynamic-field configuration.** For Candidate Website or future supported fields, grant FLS, create exactly one compatible mapping with hint/options/default policy, close/reopen the wizard, confirm disclosure, and validate review/persistence in a non-production org before broader use.
-9. **Production version.** If installing to production, use a code-coverage–validated package version promoted to Released.
+8. **Admin dynamic-field configuration is 3.3 source behavior.** After deploying 3.3 source—or a future package built/promoted from it—grant FLS, create exactly one compatible mapping with hint/options/default policy, close/reopen the wizard, confirm disclosure, and validate review/persistence in a non-production org. Released package 3.2.1 does not provide this generic workflow.
+9. **Production version.** Released package 3.2.1 is production-installable with older schema behavior. To install the generic runtime as a production package, first build, validate, and promote a new version from exact 3.3 source.
 
 ---
 
