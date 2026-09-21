@@ -3,9 +3,9 @@
 # Publish and activate the Résumé Parser Agentforce agent.
 #
 # This script changes only the separate agent and its post-publish access; it does not install or
-# upgrade the app runtime. Released package 3.2.1-1 retains older hardcoded-schema behavior. The
-# bounded generic CMDT runtime is current 3.3.0.NEXT force-app source and is not yet a newly
-# built/promoted package.
+# upgrade the app runtime. Install Released package 3.3.0-1 / 04tbm000000j6Z7AAI for the
+# production-installable bounded generic CMDT runtime, or deploy matching force-app source to an
+# appropriately enabled non-production org.
 #
 # Publishing runs in a temporary DX project. Salesforce CLI retrieves the generated metadata into
 # that temporary directory so this script can read the exact version it created; the files are never
@@ -88,9 +88,8 @@ cat <<DONE
 
 App distribution reminder:
   • This agent operation did not upgrade the installed app layer.
-  • Released package 3.2.1-1 retains older hardcoded-schema behavior.
-  • The bounded generic CMDT runtime requires a 3.3.0.NEXT source deploy or a future package built,
-    validated, and promoted from that source.
+  • Released package 3.3.0-1 / 04tbm000000j6Z7AAI contains the bounded generic CMDT runtime.
+  • Matching force-app source can be deployed directly for non-production validation.
 
 Manual Setup verification (required):
   1. In Setup, open Agentforce Agents and select Resume Parser Agent.
@@ -100,8 +99,7 @@ Manual Setup verification (required):
      for your org/release. Do not edit or redeploy generated agent metadata.
   4. Assign Resume Parser User to the intended users; existing assignments inherit the verified
      agent-access update without being recreated.
-  5. Current 3.3.0.NEXT source only: Candidate Website field/FLS/layout ship without a mapping.
-     After a 3.3 source deploy—or a future package built/promoted from it—grant FLS, create exactly
-     one compatible mapping with a hint and optional Default Value, then close/reopen the wizard
-     and confirm disclosure. Released package 3.2.1-1 does not include this generic workflow.
+  5. Released package/source 3.3 includes Candidate Website field/FLS/layout without a mapping.
+     Grant FLS, create exactly one compatible mapping with a hint and optional Default Value, then
+     close/reopen the wizard and confirm disclosure.
 DONE

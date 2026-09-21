@@ -10,7 +10,7 @@
       "path": "force-app",
       "default": false,
       "package": "Resume Parser",
-      "versionDescription": "Current 3.3.0.NEXT source for the Résumé Parser full app. It includes the bounded generic CMDT runtime: validated direct Resume_Data__c and Work_Experience__c fields become generic prompt, review, and commit envelopes; supported types, duplicate-target rejection, compatible picklists/defaults, and fail-closed disclosure are enforced. It also includes temporary Draft/file cleanup. The repository provides a separate exact-version Agent Script lifecycle under agent/, which is not included in the app package. This source is source-deployable and validated in enabled non-production orgs, but it is not yet a newly built/promoted package. 04tHu000004hhiJIAQ (3.2.1-1) remains the last BUILT/Released production-installable package and retains its older hardcoded extraction schema.",
+      "versionDescription": "Résumé Parser 3.3 bounded generic CMDT runtime: validated direct Resume_Data__c and Work_Experience__c fields become generic prompt, review, and commit envelopes; supported types, duplicate-target rejection, compatible picklists/defaults, and fail-closed disclosure are enforced. It also includes temporary Draft/file cleanup. Version 3.3.0-1 / 04tbm000000j6Z7AAI was built from this runtime with 92% code coverage and promoted to Released. The repository provides a separate exact-version Agent Script lifecycle under agent/, which is not included in the app package.",
       "definitionFile": "config/project-scratch-def.json",
       "packageMetadataAccess": {
         "permissionSets": [
@@ -31,6 +31,7 @@
     "Resume Parser@3.0.1-1": "04tHu000004hhWpIAI",
     "Resume Parser@3.1.0-1": "04tHu000004hhi4IAA",
     "Resume Parser@3.2.0-1": "04tHu000004hhiEIAQ",
-    "Resume Parser@3.2.1-1": "04tHu000004hhiJIAQ"
+    "Resume Parser@3.2.1-1": "04tHu000004hhiJIAQ",
+    "Resume Parser@3.3.0-1": "04tbm000000j6Z7AAI"
   }
 }

@@ -20,9 +20,9 @@ products (3PP) like this one and their dependencies.
 - **AI extraction.** Uploaded résumé files are sent to the org's configured Einstein/Agentforce model
   via the `Extract_Work_Experience` prompt template. Review your org's data-handling/trust settings for those model calls.
 - **Temporary draft retention.** Upload persists a Draft `Resume_Data__c` record and its file before
-  user confirmation because the prompt is grounded on the stored `ContentDocument`. In unreleased 3.3
-  source, parse failure and the Re-upload action remove the current temporary Draft/file. Released package
-  3.2.1 predates that cleanup. In either version, closing the session without Re-upload or Save can leave
-  a Draft; adopting orgs should apply an appropriate retention policy for unconfirmed résumé data.
+  user confirmation because the prompt is grounded on the stored `ContentDocument`. Released package/source
+  3.3 removes the current temporary Draft/file after parse failure or Re-upload. Closing the session without
+  Re-upload or Save can still leave a Draft; adopting orgs should apply an appropriate retention policy for
+  unconfirmed résumé data.
 - **Demonstration media.** Repository screenshots use intentionally altered, synthetic data and do not
   contain customer or employee records.
